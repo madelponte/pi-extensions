@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+**/node_modules/
 /.pnp
 .pnp.js
 
@@ -27,6 +28,9 @@ yarn-error.log*
 # local env files
 .env*.local
 .env
+
+# extension local/secrets
+mcp-bridge/config.json
 
 # vercel
 .vercel

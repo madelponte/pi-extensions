@@ -1,0 +1,18 @@
+{
+  "$schema": "./config.schema.json",
+  "enabled": true,
+  "prefix": "mcp",
+  "disabledTools": [
+    "find_nearby_places",
+    "get_company_data",
+    "query_wolfram_alpha"
+  ],
+  "allowedTools": [],
+  "server": {
+    "type": "http",
+    "url": "https://example.com/mcp",
+    "headers": {
+      "Authorization": "Bearer $MCPTOKEN"
+    }
+  }
+}
