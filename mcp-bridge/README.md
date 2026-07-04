@@ -4,15 +4,42 @@ This extension discovers tools from one MCP server and registers them as Pi tool
 
 ## Setup
 
-1. Copy the example config:
+1. Install npm dependencies from the committed lockfile:
 
    ```bash
-   cp ~/.pi/agent/extensions/mcp-bridge/config.json.example ~/.pi/agent/extensions/mcp-bridge/config.json
+   cd ~/.pi/agent/extensions/mcp-bridge
+   npm ci
    ```
 
-2. Edit `config.json` for your MCP server.
+   Use `npm ci` on cloned/checkouted copies so the exact pinned dependency versions from `package-lock.json` are installed. Use `npm install` only when intentionally updating dependencies.
 
-3. Restart Pi or run `/reload`.
+2. Copy the example config:
+
+   ```bash
+   cp config.json.example config.json
+   ```
+
+3. Edit `config.json` for your MCP server and make sure required environment variables are set, for example:
+
+   ```bash
+   export MCPTOKEN="your-token-here"
+   ```
+
+4. Restart Pi or run `/reload`.
+
+## Updating dependencies
+
+Dependencies are intentionally pinned in `package.json` and `package-lock.json` so new package releases do not silently change extension behavior.
+
+To check for updates:
+
+```bash
+cd ~/.pi/agent/extensions/mcp-bridge
+npm outdated
+npm audit --omit=dev
+```
+
+To intentionally update a dependency, edit `package.json` or run `npm install <package>@<version>`, test the extension, then commit both `package.json` and `package-lock.json`.
 
 ## Tool prefix
 
