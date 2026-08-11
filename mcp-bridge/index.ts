@@ -1,17 +1,24 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+	DEFAULT_MAX_BYTES,
+	DEFAULT_MAX_LINES,
+	formatSize,
+	truncateHead,
+	withFileMutationQueue,
+	type ExtensionAPI,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { existsSync, readFileSync } from "node:fs";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const EXT_DIR = dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = join(EXT_DIR, "config.json");
-const MAX_RESULT_BYTES = 50 * 1024;
-const MAX_RESULT_LINES = 2000;
 
 type ServerConfig =
 	| { type: "stdio"; command: string; args?: string[]; cwd?: string; env?: Record<string, string> }
@@ -91,37 +98,39 @@ function inputSchemaToTypeBox(schema: Record<string, unknown> | undefined) {
 	return Type.Unsafe(schema as any);
 }
 
-function truncateForModel(text: string): { text: string; truncated: boolean } {
-	const lines = text.split("\n");
-	let output = lines.slice(0, MAX_RESULT_LINES).join("\n");
-	let truncated = lines.length > MAX_RESULT_LINES;
-
-	if (Buffer.byteLength(output, "utf8") > MAX_RESULT_BYTES) {
-		output = Buffer.from(output, "utf8").subarray(0, MAX_RESULT_BYTES).toString("utf8");
-		truncated = true;
-	}
-
-	if (truncated) {
-		output += `\n\n[Output truncated to ${MAX_RESULT_LINES} lines / ${MAX_RESULT_BYTES} bytes.]`;
-	}
-
-	return { text: output, truncated };
+function summarizeMcpContent(content: unknown): string {
+	if (!Array.isArray(content)) return JSON.stringify(content, null, 2) ?? String(content ?? "");
+	return content
+		.map((part) => {
+			if (!part || typeof part !== "object") return String(part);
+			const item = part as Record<string, unknown>;
+			if (item.type === "text") return String(item.text ?? "");
+			return JSON.stringify(item, null, 2);
+		})
+		.filter(Boolean)
+		.join("\n\n");
 }
 
-function summarizeMcpContent(content: unknown): { text: string; truncated: boolean } {
-	const text = !Array.isArray(content)
-		? JSON.stringify(content, null, 2)
-		: content
-				.map((part) => {
-					if (!part || typeof part !== "object") return String(part);
-					const item = part as Record<string, unknown>;
-					if (item.type === "text") return String(item.text ?? "");
-					return JSON.stringify(item, null, 2);
-				})
-				.filter(Boolean)
-				.join("\n\n");
+async function truncateForModel(text: string, toolName: string) {
+	const truncation = truncateHead(text, {
+		maxLines: DEFAULT_MAX_LINES,
+		maxBytes: DEFAULT_MAX_BYTES,
+	});
+	if (!truncation.truncated) {
+		return { text: truncation.content, truncation, fullOutputPath: undefined };
+	}
 
-	return truncateForModel(text);
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-mcp-"));
+	const fullOutputPath = join(tempDir, `${normalizeToolName(toolName)}.txt`);
+	await withFileMutationQueue(fullOutputPath, () =>
+		writeFile(fullOutputPath, text, { encoding: "utf8", mode: 0o600 }),
+	);
+
+	let output = truncation.content;
+	output += `\n\n[Output truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines`;
+	output += ` (${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}).`;
+	output += ` Full output saved to: ${fullOutputPath}]`;
+	return { text: output, truncation, fullOutputPath };
 }
 
 async function makeTransport(config: ServerConfig): Promise<any> {
@@ -168,10 +177,15 @@ export default function mcpBridgeExtension(pi: ExtensionAPI) {
 
 		await closeClient();
 
-		const nextClient = new Client({ name: "pi-mcp-bridge", version: "1.0.0" });
-		const transport = await makeTransport(config.server);
-		await nextClient.connect(transport);
-		client = nextClient;
+		const nextClient = new Client({ name: "pi-mcp-bridge", version: "1.1.0" });
+		try {
+			const transport = await makeTransport(config.server);
+			await nextClient.connect(transport);
+			client = nextClient;
+		} catch (error) {
+			await nextClient.close().catch(() => undefined);
+			throw error;
+		}
 
 		const prefix = config.prefix ?? "mcp";
 		const list = await nextClient.listTools();
@@ -192,7 +206,7 @@ export default function mcpBridgeExtension(pi: ExtensionAPI) {
 			pi.registerTool({
 				name: publicName,
 				label: publicName,
-				description,
+				description: `${description}\n\nOutput is limited to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)}; truncated output is saved to a temporary file.`,
 				promptSnippet: description.split("\n")[0],
 				parameters: inputSchemaToTypeBox(tool.inputSchema),
 				async execute(_toolCallId, params, signal) {
@@ -203,10 +217,18 @@ export default function mcpBridgeExtension(pi: ExtensionAPI) {
 						{ signal },
 					);
 
-					const summary = summarizeMcpContent((result as any).content);
+					const summary = await truncateForModel(summarizeMcpContent((result as any).content), tool.name);
+					if ((result as any).isError) {
+						throw new Error(`MCP tool ${tool.name} failed: ${summary.text}`);
+					}
 					return {
 						content: [{ type: "text", text: summary.text }],
-						details: { serverTool: tool.name, exposedTool: publicName, truncated: summary.truncated },
+						details: {
+							serverTool: tool.name,
+							exposedTool: publicName,
+							truncation: summary.truncation.truncated ? summary.truncation : undefined,
+							fullOutputPath: summary.fullOutputPath,
+						},
 					};
 				},
 			});

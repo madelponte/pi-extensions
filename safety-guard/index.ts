@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { isToolCallEventType, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const DESTRUCTIVE_PATTERNS: Array<[RegExp, string]> = [
 	[/(^|[;&|]\s*|\bsudo\s+)(rm|rmdir)\b/i, "file deletion"],
@@ -68,9 +68,8 @@ function approvalReason(command: string): string | undefined {
 
 export default function safetyGuard(pi: ExtensionAPI) {
 	pi.on("tool_call", async (event, ctx) => {
-		if (event.toolName !== "bash") return;
-		const command = (event.input as { command?: unknown }).command;
-		if (typeof command !== "string") return;
+		if (!isToolCallEventType("bash", event)) return;
+		const command = event.input.command;
 		const reason = approvalReason(command);
 		if (!reason) return;
 

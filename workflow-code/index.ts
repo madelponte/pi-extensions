@@ -39,7 +39,10 @@ function phaseLabel(phase: Phase): string {
 }
 
 async function chooseModel(ctx: ExtensionContext, title: string): Promise<Model<Api> | undefined> {
-	const models = await ctx.modelRegistry.getAvailable();
+	// Match Pi's built-in picker: honor --models/enabledModels when a scope is configured.
+	const models = ctx.scopedModels.length > 0
+		? ctx.scopedModels.map(({ model }) => model)
+		: await ctx.modelRegistry.getAvailable();
 	if (models.length === 0) {
 		ctx.ui.notify("No available models found.", "error");
 		return undefined;
@@ -185,6 +188,9 @@ export default function workflowCodeExtension(pi: ExtensionAPI) {
 		description:
 			"Advance the active workflow-code sequence to the next phase. Use this only when the current workflow phase is complete.",
 		promptSnippet: "Advance workflow-code to the next sequential model phase",
+		promptGuidelines: [
+			"Use workflow_continue only when the active workflow-code planning or coding phase is complete.",
+		],
 		parameters: CONTINUE_PARAMS,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			if (!state) {
@@ -245,7 +251,7 @@ export default function workflowCodeExtension(pi: ExtensionAPI) {
 		};
 	});
 
-	pi.on("agent_end", async (_event, ctx) => {
+	pi.on("agent_settled", async (_event, ctx) => {
 		if (!state || state.phase !== "reviewing" || !state.reviewTurnStarted) return;
 		await exitWorkflow(ctx, "Workflow complete.");
 	});
