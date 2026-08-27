@@ -4,8 +4,10 @@ Confirms before destructive shell commands and before Git commands that may chan
 
 ## What triggers a prompt
 
-- **File deletion**: `rm`/`rmdir` at a command boundary — start of command, after `;`/`&`/`|` or a newline, inside `$( )`, backticks, subshells, or `sh -c '...'` quotes — and after `sudo` (including flag forms like `sudo -u deploy rm -rf /`).
-- **`find`-based deletion**: `find … -delete` and `find … -exec rm …`.
+- **File deletion**: `rm`/`rmdir` at a command boundary — start of command, after `;`/`&`/`|` or a newline, inside `$( )`, backticks, subshells, or `sh -c '...'` quotes — and after `sudo` (including flag forms like `sudo -u deploy rm -rf /`). A direct invocation whose targets are all static paths lexically below `/tmp` runs without confirmation; mixed or dynamic targets, `/tmp` itself, `rmdir -p`, privileged/wrapped/path-qualified invocations, and `unlink` still require approval.
+- **Alternate deletion forms**: `command`/`env`/path-qualified `rm`, `xargs rm`, `rsync --delete*`, plus `find … -delete`, `find … -exec rm …`, and `find … -execdir rm …`.
+- **Privilege escalation**: `sudo`, `sudoedit`, `doas`, and `su -c`/`su --command`, including path-qualified and `command`/`env`-wrapped forms.
+- **Permissions and ownership**: recursive `chmod`/`chown` (`-R`, combined short flags containing `R`, or `--recursive`) and `setfacl`.
 - **Disk operations**: `shred`, `wipefs`, `mkfs*`, `fdisk`, `parted`.
 - **Raw overwrite**: `dd … of=`.
 - **Process termination**: `kill`, `killall`, `pkill`.

@@ -30,16 +30,34 @@ shouldFlag("git push", GIT("push"));
 shouldFlag("git reset --hard HEAD~1", GIT("reset"));
 shouldFlag("git -c user.name=x push origin main", GIT("push"));
 shouldFlag("sudo -u deploy git push origin main", GIT("push"));
-shouldFlag("rm -rf /tmp/x", "file deletion");
+shouldAllow("rm -rf /tmp/x");
 shouldFlag("echo done\nrm -rf /home/user", "file deletion");
 
 // --- rm / rmdir: direct and at command boundaries --------------------------
+shouldAllow("rm -f /tmp/result.txt");
+shouldAllow("rm -rf /tmp/one /tmp/two");
+shouldAllow("rm -rf /tmp/*");
+shouldAllow("rm -rf '/tmp/path with spaces'");
+shouldAllow("echo 1 && rm -rf /tmp/x");
+shouldAllow("$(rm -rf /tmp/important)"); // command substitution
+shouldAllow("`rm -rf /tmp/important`"); // backticks
+shouldAllow("sh -c 'rm -rf /tmp/generated'");
+shouldAllow("rm -f /tmp/result.txt 2>/dev/null");
+shouldAllow("rmdir /tmp/empty");
+shouldFlag("rm -rf /tmp"); // do not allow removal of the temp directory itself
+shouldFlag("rm -rf /tmpfile");
+shouldFlag("rm -rf /tmp/x /home/user");
+shouldFlag("rm -rf /tmp/../home/user");
+shouldFlag("rm -rf /tmp/$DYNAMIC_PATH");
+shouldFlag("rm -rf /tmp/x && rm -rf /home/user");
+shouldFlag("rmdir -p /tmp/one/two"); // -p can remove /tmp too
+shouldFlag("rmdir -vp /tmp/one/two");
+shouldFlag("find /tmp -name '*.tmp' -delete"); // exemption is limited to rm/rmdir
+shouldFlag("sudo rm -rf /tmp/x", "privilege escalation");
 shouldFlag("sudo rm -rf /var/data");
 shouldFlag("sudo -u deploy rm -rf /home/user");
 shouldFlag("echo 1 && rm -rf /x");
 shouldFlag("echo 1; rm -rf /x");
-shouldFlag("$(rm -rf /tmp/important)"); // command substitution
-shouldFlag("`rm -rf /tmp/important`"); // backticks
 shouldFlag("sh -c 'rm -rf /home/user/data'");
 shouldFlag("bash -c \"rm -rf /data\"");
 shouldFlag("echo y | rm -rf /x");
@@ -58,6 +76,48 @@ shouldFlag("find /var/log -mtime +30 -delete");
 shouldFlag("find . -name '*.log' -exec rm -f {} \\;");
 shouldAllow("find . -name '*.tmp' -print");
 shouldAllow("find . -exec grep foo {} \\;");
+
+// --- alternate deletion forms ----------------------------------------------
+shouldFlag("unlink /home/user/data.txt", "file deletion");
+shouldFlag("unlink /tmp/generated.txt", "file deletion");
+shouldFlag("/bin/rm -rf /home/user/data", "file deletion");
+shouldFlag("/bin/rm -rf /tmp/generated", "file deletion");
+shouldFlag("command rm -rf /home/user/data", "file deletion");
+shouldFlag("command unlink /home/user/data", "file deletion");
+shouldFlag("env FOO=bar rm -rf /home/user/data", "file deletion");
+shouldFlag("env -u TMPDIR rm -rf /home/user/data", "file deletion");
+shouldFlag("xargs -0 rm -f < files.txt", "xargs file deletion");
+shouldFlag("find . -name '*.tmp' -execdir rm -f {} \\;", "find file deletion");
+shouldFlag("rsync -a --delete src/ dest/", "rsync deletion");
+shouldFlag("rsync -a --delete-excluded src/ dest/", "rsync deletion");
+shouldAllow("xargs -0 echo < files.txt");
+shouldAllow("rsync -a src/ dest/");
+
+// --- privilege escalation ---------------------------------------------------
+shouldFlag("sudo apt update", "privilege escalation");
+shouldFlag("/usr/bin/sudo systemctl restart nginx", "privilege escalation");
+shouldFlag("sudoedit /etc/hosts", "privilege escalation");
+shouldFlag("doas apk add curl", "privilege escalation");
+shouldFlag("command sudo apt update", "privilege escalation");
+shouldFlag("env -i sudo apt update", "privilege escalation");
+shouldFlag("su -c 'whoami'", "privilege escalation");
+shouldFlag("su deploy --command='id'", "privilege escalation");
+shouldAllow("echo sudo apt update");
+shouldAllow("env FOO=bar echo sudo apt update");
+shouldAllow("su deploy");
+
+// --- recursive permissions and ACLs ----------------------------------------
+shouldFlag("chmod -R 755 ./build", "recursive permission/ownership change");
+shouldFlag("chmod -Rv 755 ./build", "recursive permission/ownership change");
+shouldFlag("chown --recursive user:group ./data", "recursive permission/ownership change");
+shouldFlag("/bin/chown -vR user:group ./data", "recursive permission/ownership change");
+shouldFlag("command chmod -R 755 ./build", "recursive permission/ownership change");
+shouldFlag("setfacl -m u:deploy:rwx ./data", "ACL change");
+shouldFlag("/usr/bin/setfacl -b ./data", "ACL change");
+shouldFlag("env FOO=bar setfacl -b ./data", "ACL change");
+shouldAllow("chmod +x ./script.sh");
+shouldAllow("chown user:group ./file.txt");
+shouldAllow("getfacl ./data");
 
 // --- disk / process / container / k8s / db (regression) ---------------------
 shouldFlag("shred /dev/sda1");

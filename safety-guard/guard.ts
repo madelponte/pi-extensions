@@ -57,22 +57,98 @@ const GIT_INVOCATION = new RegExp(
 	"gi",
 );
 
+const RM_INVOCATION = new RegExp(
+	`(?:${COMMAND_BOUNDARY}|\\bsudo\\b(?:\\s+${FLAG_PAIR})*\\s+)(rm|rmdir)\\b([^\\n;&|]*)`,
+	"gi",
+);
+
+const EXECUTABLE_PATH = String.raw`(?:[^\s;&|()]+/)*`;
+const COMMAND_WRAPPER = String.raw`command(?:\s+-\S+)*\s+`;
+const ENV_COMMAND_WRAPPER = String.raw`env(?:\s+(?:${ENV_ASSIGN}|-\S+(?:\s+\S+)?))*\s+`;
+const OPTIONAL_COMMAND_WRAPPER = `(?:(?:${COMMAND_WRAPPER})|(?:${ENV_COMMAND_WRAPPER}))?`;
+
 const DESTRUCTIVE_PATTERNS: Array<[RegExp, string]> = [
-	// rm/rmdir at a command boundary, or after sudo (with flag tokens, e.g.
-	// `sudo -u deploy rm -rf /`).
-	[new RegExp(`(?:${COMMAND_BOUNDARY}|\\bsudo\\b(?:\\s+${FLAG_PAIR})*\\s+)(rm|rmdir)\\b`, "i"), "file deletion"],
+	// Alternate deletion forms that do not go through the rm parser above.
+	[new RegExp(`${COMMAND_BOUNDARY}${OPTIONAL_COMMAND_WRAPPER}${EXECUTABLE_PATH}unlink\\b`, "i"), "file deletion"],
+	[new RegExp(`${COMMAND_BOUNDARY}(?:${COMMAND_WRAPPER}|${ENV_COMMAND_WRAPPER})${EXECUTABLE_PATH}(?:rm|rmdir)\\b`, "i"), "file deletion"],
+	[new RegExp(`${COMMAND_BOUNDARY}(?:[^\\s;&|()]+/)+(?:rm|rmdir)\\b`, "i"), "file deletion"],
+	[new RegExp(`${COMMAND_BOUNDARY}${OPTIONAL_COMMAND_WRAPPER}${EXECUTABLE_PATH}xargs\\b[^\\n;&|]*\\b(?:rm|rmdir)\\b`, "i"), "xargs file deletion"],
+	[new RegExp(`${COMMAND_BOUNDARY}${OPTIONAL_COMMAND_WRAPPER}${EXECUTABLE_PATH}rsync\\b[^\\n;&|]*\\s--delete(?:-\\S+)?\\b`, "i"), "rsync deletion"],
+	// Privilege escalation should always be explicit, even for an otherwise safe command.
+	[new RegExp(`${COMMAND_BOUNDARY}${OPTIONAL_COMMAND_WRAPPER}${EXECUTABLE_PATH}(?:sudo|sudoedit|doas)\\b`, "i"), "privilege escalation"],
+	[new RegExp(`${COMMAND_BOUNDARY}${OPTIONAL_COMMAND_WRAPPER}${EXECUTABLE_PATH}su\\b[^\\n;&|]*(?:\\s-c\\b|\\s--command(?:=|\\s))`, "i"), "privilege escalation"],
+	// Recursive permission changes and ACL mutation can disable access without deleting files.
+	[new RegExp(`${COMMAND_BOUNDARY}${OPTIONAL_COMMAND_WRAPPER}${EXECUTABLE_PATH}(?:chmod|chown)\\b[^\\n;&|]*(?:\\s--recursive\\b|\\s-[A-Za-z]*R[A-Za-z]*\\b)`, "i"), "recursive permission/ownership change"],
+	[new RegExp(`${COMMAND_BOUNDARY}${OPTIONAL_COMMAND_WRAPPER}${EXECUTABLE_PATH}setfacl\\b`, "i"), "ACL change"],
 	[/\b(shred|wipefs|mkfs(?:\.[\w-]+)?|fdisk|parted)\b/i, "destructive disk operation"],
 	[/\b(dd)\b[^\n;&|]*\bof\s*=/i, "raw device/file overwrite"],
 	[/\b(kill|killall|pkill)\b/i, "process termination"],
 	[/\b(docker|podman)\s+(system\s+prune|volume\s+rm|image\s+rm|container\s+rm)\b/i, "container data deletion"],
 	[/\b(kubectl)\s+delete\b/i, "Kubernetes resource deletion"],
 	[/\b(dropdb|DROP\s+(DATABASE|TABLE|SCHEMA)|TRUNCATE\s+TABLE)\b/i, "database deletion"],
-	// `find ... -delete` and `find ... -exec rm ...`.
-	[/\bfind\b[^\n;&|]*(?:\s-delete\b|\s-exec\b[^\n;&|]*\brm\b)/i, "find file deletion"],
+	// `find ... -delete`, `-exec rm ...`, and `-execdir rm ...`.
+	[/\bfind\b[^\n;&|]*(?:\s-delete\b|\s-exec(?:dir)?\b[^\n;&|]*\brm\b)/i, "find file deletion"],
 ];
 
 function shellWords(value: string): string[] {
 	return value.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)?.map((word) => word.replace(/^(['"])(.*)\1$/, "$2")) ?? [];
+}
+
+function isRedirection(word: string): boolean {
+	return /^\d*(?:<>|>>?|<<?|>&|<&)/.test(word);
+}
+
+/**
+ * Returns a reason for rm/rmdir unless every target is lexically below /tmp.
+ * This remains deliberately conservative: dynamic paths and `rmdir -p` need
+ * approval because they may resolve outside /tmp or remove /tmp itself.
+ */
+function rmInvocationReason(command: string): string | undefined {
+	for (const match of command.matchAll(RM_INVOCATION)) {
+		const executable = match[1]?.toLowerCase();
+		const words = shellWords(match[2] ?? "");
+		const targets: string[] = [];
+		let options = true;
+		let skipRedirectionTarget = false;
+
+		for (const word of words) {
+			if (skipRedirectionTarget) {
+				skipRedirectionTarget = false;
+				continue;
+			}
+			if (isRedirection(word)) {
+				skipRedirectionTarget = /^(?:\d*)(?:<>|>>?|<<?)$/.test(word);
+				continue;
+			}
+			if (options && word === "--") {
+				options = false;
+				continue;
+			}
+			if (options && word.startsWith("-")) {
+				if (executable === "rmdir" && (word === "--parents" || /^-[^-]*p/.test(word))) return "file deletion";
+				continue;
+			}
+			options = false;
+			targets.push(word);
+		}
+
+		if (targets.length === 0) return "file deletion";
+		for (const target of targets) {
+			// Ignore syntax that closes a command substitution/backtick invocation.
+			const staticTarget = target.replace(/[)`]+$/, "");
+			// Expansions can inject `..` or extra path components, so only static
+			// paths (shell globs included) qualify for the /tmp exemption.
+			if (/[`$(){}]/.test(staticTarget)) return "file deletion";
+			const normalized = staticTarget.replace(/\/{2,}/g, "/").split("/").reduce<string[]>((parts, part) => {
+				if (!part || part === ".") return parts;
+				if (part === "..") parts.pop();
+				else parts.push(part);
+				return parts;
+			}, []).join("/");
+			if (!staticTarget.startsWith("/") || !normalized.startsWith("tmp/")) return "file deletion";
+		}
+	}
+	return undefined;
 }
 
 /** Returns a reason when the command contains a git invocation that may change repository state. */
@@ -116,6 +192,8 @@ export function gitInvocationReason(command: string): string | undefined {
 export function approvalReason(command: string): string | undefined {
 	const gitReason = gitInvocationReason(command);
 	if (gitReason) return gitReason;
+	const rmReason = rmInvocationReason(command);
+	if (rmReason) return rmReason;
 	for (const [pattern, reason] of DESTRUCTIVE_PATTERNS) {
 		if (pattern.test(command)) return reason;
 	}
