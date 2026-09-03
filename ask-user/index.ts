@@ -332,9 +332,10 @@ export default function askUser(pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme, _context) {
-			const question = typeof args.question === "string" ? args.question : "";
-			const options = Array.isArray(args.options)
-				? args.options.filter((option): option is string => typeof option === "string")
+			const question = typeof args?.question === "string" ? args.question : "";
+			const rawOptions = args?.options;
+			const options = Array.isArray(rawOptions)
+				? rawOptions.filter((option): option is string => typeof option === "string")
 				: [];
 			let text = theme.fg("toolTitle", theme.bold("ask_user ")) + theme.fg("muted", question);
 			if (options.length > 0) {
@@ -345,9 +346,15 @@ export default function askUser(pi: ExtensionAPI) {
 
 		renderResult(result, _options, theme, _context) {
 			const details = result.details as AskUserDetails | undefined;
+			const content = result.content?.[0];
+			// Every path must return a Component: pi adds the returned
+			// component to the row's Box unchecked, so returning undefined
+			// crashes the TUI. Validation failures and aborted calls arrive
+			// with no usable details (e.g. `details: {}`), so fall back to
+			// the raw result text, matching pi's built-in fallback.
+			const fallback = new Text(content?.type === "text" ? content.text : "", 0, 0);
 			if (!details) {
-				const content = result.content[0];
-				return new Text(content?.type === "text" ? content.text : "", 0, 0);
+				return fallback;
 			}
 
 			switch (details.responseKind) {
@@ -367,6 +374,9 @@ export default function askUser(pi: ExtensionAPI) {
 					return new Text(theme.fg("warning", "Question cancelled"), 0, 0);
 				case "unavailable":
 					return new Text(theme.fg("error", "Interactive UI unavailable"), 0, 0);
+				default:
+					// Unknown or stale details shape (e.g. an old session replay).
+					return fallback;
 			}
 		},
 	});
