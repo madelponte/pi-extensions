@@ -29,7 +29,7 @@ This extension discovers tools from one MCP server and registers them as Pi tool
 
 ## Updating dependencies
 
-Dependencies are intentionally pinned in `package.json` and `package-lock.json` so new package releases do not silently change extension behavior.
+Dependencies are intentionally pinned in `package.json` and `package-lock.json` so new package releases do not silently change extension behavior. The `overrides` entries pin patched transitive versions required for a clean production audit; re-check whether they are still needed when updating the MCP SDK.
 
 To check for updates:
 

@@ -1,9 +1,7 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { keyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	Editor,
 	type EditorTheme,
-	Key,
-	matchesKey,
 	Text,
 	visibleWidth,
 	wrapTextWithAnsi,
@@ -130,7 +128,7 @@ export default function askUser(pi: ExtensionAPI) {
 				return resultFor(params.question, options, "unavailable", null);
 			}
 
-			const response = await ctx.ui.custom<UserResponse | null>((tui, theme, _keybindings, done) => {
+			const response = await ctx.ui.custom<UserResponse | null>((tui, theme, keybindings, done) => {
 				const hasOptions = options.length > 0;
 				let optionIndex = 0;
 				let editing = !hasOptions;
@@ -184,7 +182,7 @@ export default function askUser(pi: ExtensionAPI) {
 				function handleInput(data: string) {
 					if (finished) return;
 					if (editing) {
-						if (matchesKey(data, Key.escape)) {
+						if (keybindings.matches(data, "tui.select.cancel")) {
 							if (hasOptions) {
 								editing = false;
 								validationError = false;
@@ -201,17 +199,17 @@ export default function askUser(pi: ExtensionAPI) {
 						return;
 					}
 
-					if (matchesKey(data, Key.up)) {
+					if (keybindings.matches(data, "tui.select.up")) {
 						optionIndex = Math.max(0, optionIndex - 1);
 						refresh();
 						return;
 					}
-					if (matchesKey(data, Key.down)) {
+					if (keybindings.matches(data, "tui.select.down")) {
 						optionIndex = Math.min(options.length, optionIndex + 1);
 						refresh();
 						return;
 					}
-					if (matchesKey(data, Key.enter)) {
+					if (keybindings.matches(data, "tui.select.confirm")) {
 						if (optionIndex === options.length) {
 							editing = true;
 							editor.setText("");
@@ -225,7 +223,7 @@ export default function askUser(pi: ExtensionAPI) {
 						}
 						return;
 					}
-					if (matchesKey(data, Key.escape)) finish(null);
+					if (keybindings.matches(data, "tui.select.cancel")) finish(null);
 				}
 
 				function render(width: number): string[] {
@@ -286,10 +284,17 @@ export default function askUser(pi: ExtensionAPI) {
 
 					lines.push("");
 					const help = editing
-						? hasOptions
-							? "Enter submit • Shift+Enter newline • Esc return to choices"
-							: "Enter submit • Shift+Enter newline • Esc cancel"
-						: "↑↓ navigate • Enter select • Esc cancel";
+						? [
+							keyHint("tui.input.submit", "submit"),
+							keyHint("tui.input.newLine", "newline"),
+							keyHint("tui.select.cancel", hasOptions ? "return to choices" : "cancel"),
+						].join(" • ")
+						: [
+							keyHint("tui.select.up", "up"),
+							keyHint("tui.select.down", "down"),
+							keyHint("tui.select.confirm", "select"),
+							keyHint("tui.select.cancel", "cancel"),
+						].join(" • ");
 					addWrappedWithPrefix(renderWidth > 1 ? " " : "", theme.fg("dim", help));
 					lines.push(theme.fg("accent", "─".repeat(renderWidth)));
 

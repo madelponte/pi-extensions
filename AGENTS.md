@@ -14,12 +14,16 @@ Before changing an extension, read Pi's extension documentation completely and f
 
 For custom TUI work, also read `docs/tui.md` and any linked keybinding/theme documentation. Prefer current Pi APIs and examples over assumptions from older versions.
 
+## Compatibility baseline
+
+The extensions were last reviewed against Pi `0.85.0`. Before a future upgrade, read the installed package's `CHANGELOG.md` from this baseline forward, then re-run the extension load checks and targeted tests below. Pi `0.85.0` did not introduce an extension API breaking change; the relevant TUI guidance is that custom components should honor the injected `KeybindingsManager` rather than hard-coded keys.
+
 ## Repository layout
 
-- `ask-user/index.ts` — registers the blocking `ask_user` tool, including custom TUI and RPC interaction paths.
-- `mcp-bridge/` — discovers one MCP server's tools and exposes them as Pi tools. See its `README.md`, schema, and example config.
-- `safety-guard/` — intercepts Bash tool calls and asks for approval before risky commands. Command analysis is isolated in `guard.ts` and covered by `test.ts`.
-- `tool-profiles/` — provides `/profile` and `/profile-status` commands for switching active tool sets.
+- `ask-user/index.ts` — registers the sequential, blocking `ask_user` tool. TUI mode uses a custom focus-aware component; RPC mode uses standard `select`/`editor` dialogs; non-UI modes return an unavailable result instead of hanging.
+- `mcp-bridge/` — starts one MCP client during `session_start`, discovers the server's tools, and registers them dynamically. It closes the client during `session_shutdown`, truncates large model-facing output, and writes full truncated output to a private temporary file through Pi's file mutation queue. See its `README.md`, schema, and example config.
+- `safety-guard/` — intercepts typed built-in Bash tool calls and asks for approval before risky commands. Command analysis is isolated in `guard.ts` and covered by `test.ts`.
+- `tool-profiles/` — provides `/profile` and `/profile-status` commands for switching active tool sets. `main` intentionally means every registered tool, while `no-mcp` identifies MCP tools from their name or Pi `sourceInfo` metadata. Profile state is in memory for the current session runtime.
 - `LICENSE` — MIT license.
 
 Pi auto-discovers top-level `*.ts` extensions and extension directories containing `index.ts` from this location. After changing extension code, reload Pi with `/reload` before interactive verification.
@@ -71,11 +75,20 @@ npm ci
 
 Use `npm ci` for normal setup. Use `npm install` only when intentionally updating dependencies, and commit `package.json` and `package-lock.json` together. Do not edit or commit `mcp-bridge/node_modules/`.
 
-`mcp-bridge/config.json` is local, ignored, and may contain secrets. Never print or commit its contents. Use `config.json.example` and `config.schema.json` for documented configuration changes. MCP calls may require a live configured server, so clearly report when validation is limited to static checks.
+`mcp-bridge/config.json` and local backup variants may contain secrets. Never read them unless the user explicitly asks, and never print or commit their contents. Use `config.json.example` and `config.schema.json` for documented configuration changes. MCP calls may require a live configured server, so clearly report when validation is limited to static checks.
 
-### Other extensions
+### Extension load checks
 
-`ask-user` and `tool-profiles` currently have no automated test suite. Validate their control flow statically, then use `/reload` and exercise the affected tool or slash command interactively when practical.
+Validate that each factory still imports and registers against the installed Pi version without starting a session or making model/MCP calls:
+
+```bash
+pi --no-extensions --offline --list-models -e ./ask-user/index.ts
+pi --no-extensions --offline --list-models -e ./mcp-bridge/index.ts
+pi --no-extensions --offline --list-models -e ./safety-guard/index.ts
+pi --no-extensions --offline --list-models -e ./tool-profiles/index.ts
+```
+
+`ask-user` and `tool-profiles` currently have no automated test suite. Validate their control flow statically, then use `/reload` and exercise the affected tool or slash command interactively when practical. For `ask-user`, cover open-ended and multiple-choice paths, cancellation, custom responses, narrow rendering, remapped selection keys, RPC dialogs, and non-UI fallback.
 
 ## Finishing work
 
