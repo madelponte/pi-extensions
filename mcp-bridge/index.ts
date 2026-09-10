@@ -59,6 +59,20 @@ function expandEnvMap(values?: Record<string, string>): Record<string, string> |
 	return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, expandEnv(value)]));
 }
 
+function describeError(error: unknown): string {
+	const parts: string[] = [];
+	let current: unknown = error;
+	let depth = 0;
+	while (current instanceof Error && depth < 5) {
+		const code = (current as { code?: unknown }).code;
+		parts.push(typeof code === "string" && code ? `${current.message} (${code})` : current.message);
+		current = (current as { cause?: unknown }).cause;
+		depth += 1;
+	}
+	if (current !== undefined && current !== null) parts.push(String(current));
+	return parts.join(": ") || String(error);
+}
+
 function cleanProcessEnv(): Record<string, string> {
 	return Object.fromEntries(
 		Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
@@ -242,7 +256,7 @@ export default function mcpBridgeExtension(pi: ExtensionAPI) {
 		try {
 			await connectAndRegister(ctx);
 		} catch (error) {
-			ctx.ui.notify(`MCP bridge failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+			ctx.ui.notify(`MCP bridge failed: ${describeError(error)}`, "error");
 		}
 	});
 
