@@ -4,7 +4,7 @@ This extension discovers tools from one MCP server and registers them as Pi tool
 
 ## Setup
 
-1. Use Node.js 20 or newer, then install npm dependencies from the committed lockfile:
+1. Use Node.js 22.19 or newer (the Pi 0.86 runtime baseline), then install npm dependencies from the committed lockfile:
 
    ```bash
    cd ~/.pi/agent/extensions/mcp-bridge

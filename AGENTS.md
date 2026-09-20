@@ -16,7 +16,7 @@ For custom TUI work, also read `docs/tui.md` and any linked keybinding/theme doc
 
 ## Compatibility baseline
 
-The extensions were last reviewed against Pi `0.85.0`. Before a future upgrade, read the installed package's `CHANGELOG.md` from this baseline forward, then re-run the extension load checks and targeted tests below. Pi `0.85.0` did not introduce an extension API breaking change; the relevant TUI guidance is that custom components should honor the injected `KeybindingsManager` rather than hard-coded keys.
+The extensions were last reviewed against Pi `0.86.0`. Before a future upgrade, read the installed package's `CHANGELOG.md` from this baseline forward, then re-run the extension load checks and targeted tests below. The Pi `0.86.0` breaking changes affect custom provider streams, JSON compatibility for tool calls/results, and `user_bash` handlers. This repository has no custom provider or `user_bash` implementation; custom tool parameters and details must remain JSON-compatible. Custom TUI components must honor the injected `KeybindingsManager` rather than hard-coded keys.
 
 ## Repository layout
 

@@ -18,7 +18,7 @@ Confirms before destructive shell commands and before Git commands that may chan
 
 Detection is a heuristic scanner over the command string, not a shell parser. It errs toward asking (a confirm prompt) rather than missing a destructive command, so occasional false positives are possible. It cannot see inside interpreted payloads such as `node -e "..."` or `curl … | sh`.
 
-In the TUI, approval uses a height-bounded command preview so long commands do not force the terminal to redraw thousands of rows. Scroll by line with the configured selection up/down keys, by page with the configured editor page keys, approve with the configured selection-confirm key, or deny with the configured selection-cancel key. RPC mode continues to use Pi's standard confirm dialog.
+In the TUI, approval uses a height-bounded command preview so long commands do not force the terminal to redraw thousands of rows. Scroll by line with the configured selection up/down keys, by page with the configured selection page keys, approve with the configured selection-confirm key, or deny with the configured selection-cancel key. RPC mode continues to use Pi's standard confirm dialog.
 
 ## Layout
 

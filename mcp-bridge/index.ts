@@ -5,6 +5,7 @@ import {
 	truncateHead,
 	withFileMutationQueue,
 	type ExtensionAPI,
+	type TruncationResult,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -43,6 +44,13 @@ type ToolRecord = {
 	exposedName: string;
 	description: string;
 	disabledReason?: string;
+};
+
+type McpToolDetails = {
+	serverTool: string;
+	exposedTool: string;
+	truncation?: TruncationResult;
+	fullOutputPath?: string;
 };
 
 function readConfig(): Config | undefined {
@@ -235,14 +243,17 @@ export default function mcpBridgeExtension(pi: ExtensionAPI) {
 					if ((result as any).isError) {
 						throw new Error(`MCP tool ${tool.name} failed: ${summary.text}`);
 					}
+					const details: McpToolDetails = {
+						serverTool: tool.name,
+						exposedTool: publicName,
+					};
+					if (summary.fullOutputPath) {
+						details.truncation = summary.truncation;
+						details.fullOutputPath = summary.fullOutputPath;
+					}
 					return {
 						content: [{ type: "text", text: summary.text }],
-						details: {
-							serverTool: tool.name,
-							exposedTool: publicName,
-							truncation: summary.truncation.truncated ? summary.truncation : undefined,
-							fullOutputPath: summary.fullOutputPath,
-						},
+						details,
 					};
 				},
 			});

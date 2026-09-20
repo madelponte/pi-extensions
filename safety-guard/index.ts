@@ -86,8 +86,8 @@ export default function safetyGuard(pi: ExtensionAPI) {
 						const scrollHelp = [
 							keyHint("tui.select.up", "scroll up"),
 							keyHint("tui.select.down", "scroll down"),
-							keyHint("tui.editor.pageUp", "page up"),
-							keyHint("tui.editor.pageDown", "page down"),
+							keyHint("tui.select.pageUp", "page up"),
+							keyHint("tui.select.pageDown", "page down"),
 						].join(" • ");
 						const decisionHelp = [
 							keyHint("tui.select.confirm", "approve"),
@@ -119,9 +119,9 @@ export default function safetyGuard(pi: ExtensionAPI) {
 							scrollBy(-1);
 						} else if (keybindings.matches(data, "tui.select.down")) {
 							scrollBy(1);
-						} else if (keybindings.matches(data, "tui.editor.pageUp")) {
+						} else if (keybindings.matches(data, "tui.select.pageUp")) {
 							scrollBy(-pageSize);
-						} else if (keybindings.matches(data, "tui.editor.pageDown")) {
+						} else if (keybindings.matches(data, "tui.select.pageDown")) {
 							scrollBy(pageSize);
 						}
 					},
