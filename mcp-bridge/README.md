@@ -1,6 +1,6 @@
 # Pi MCP Bridge Extension
 
-This extension discovers tools from one MCP server and registers them as Pi tools.
+This extension discovers tools from one MCP server and registers them as Pi tools. It follows paginated `tools/list` responses and assigns deterministic suffixes when normalized MCP names collide with one another or with another Pi tool.
 
 ## Setup
 
@@ -37,6 +37,7 @@ To check for updates:
 cd ~/.pi/agent/extensions/mcp-bridge
 npm outdated @modelcontextprotocol/sdk
 npm audit --omit=dev
+node test.ts
 ```
 
 To intentionally update a dependency, edit `package.json` or run `npm install <package>@<version>`, test the extension, then commit both `package.json` and `package-lock.json`.
@@ -66,6 +67,10 @@ Alternatively, expose only an explicit allow-list:
 ```
 
 If `allowedTools` is non-empty, all other tools are hidden. `disabledTools` still wins.
+
+## Tool results
+
+Text and structured MCP output is returned to the model, with structured content rendered as JSON. MCP image blocks are forwarded as Pi image content instead of embedding their base64 data in text. Other MCP content types are represented as JSON text. Large textual output uses Pi's standard truncation limits and is saved to a private temporary file when truncated.
 
 ## Commands
 

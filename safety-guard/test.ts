@@ -86,6 +86,10 @@ shouldFlag("command rm -rf /home/user/data", "file deletion");
 shouldFlag("command unlink /home/user/data", "file deletion");
 shouldFlag("env FOO=bar rm -rf /home/user/data", "file deletion");
 shouldFlag("env -u TMPDIR rm -rf /home/user/data", "file deletion");
+shouldFlag("FOO=bar rm -rf /home/user/data", "file deletion");
+shouldFlag("A=1 B=2 /bin/rm -rf /home/user/data", "file deletion");
+shouldFlag("if true; then rm -rf /home/user/data; fi", "file deletion");
+shouldFlag("for path in /home/user/data; do rm -rf \"$path\"; done", "file deletion");
 shouldFlag("xargs -0 rm -f < files.txt", "xargs file deletion");
 shouldFlag("find . -name '*.tmp' -execdir rm -f {} \\;", "find file deletion");
 shouldFlag("rsync -a --delete src/ dest/", "rsync deletion");
@@ -149,6 +153,12 @@ shouldFlag("git branch --delete feature", GIT("branch"));
 shouldFlag("git config user.name bob", GIT("config"));
 shouldFlag("git tag v1.0", GIT("tag"));
 shouldFlag("git worktree add ../wt main", GIT("worktree"));
+shouldFlag("git reflog expire --expire=now --all", GIT("reflog"));
+shouldFlag("git reflog delete HEAD@{0}", GIT("reflog"));
+shouldFlag("git remote -v remove origin", GIT("remote"));
+shouldFlag("git config --show-origin core.hooksPath /tmp/hooks", GIT("config"));
+shouldFlag("/usr/bin/git reset --hard HEAD", GIT("reset"));
+shouldFlag("FOO=bar /usr/bin/git push origin main", GIT("push"));
 
 // git: wrappers and separators that used to bypass detection
 shouldFlag("bash -c \"git push origin main\"", GIT("push"));
@@ -194,6 +204,11 @@ shouldAllow("ssh git@github.com");
 shouldAllow("git-lfs push");
 shouldAllow("git log --format=%(git)");
 shouldAllow("git log --grep=git");
+shouldAllow("git reflog");
+shouldAllow("git reflog show HEAD");
+shouldAllow("git remote --verbose");
+shouldAllow("git remote -v show origin");
+shouldAllow("git config --show-origin core.hooksPath");
 
 // --- plain commands -----------------------------------------------------------
 shouldAllow("ls -la");

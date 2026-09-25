@@ -39,8 +39,16 @@ export default function safetyGuard(pi: ExtensionAPI) {
 				function finish(value: boolean) {
 					if (finished) return;
 					finished = true;
+					ctx.signal?.removeEventListener("abort", onAbort);
 					done(value);
 				}
+
+				function onAbort() {
+					finish(false);
+				}
+
+				if (ctx.signal?.aborted) finish(false);
+				else ctx.signal?.addEventListener("abort", onAbort, { once: true });
 
 				function clearCache() {
 					cachedWidth = undefined;
@@ -130,13 +138,14 @@ export default function safetyGuard(pi: ExtensionAPI) {
 					},
 					dispose() {
 						finished = true;
+						ctx.signal?.removeEventListener("abort", onAbort);
 						cachedLines = undefined;
 					},
 				};
 			});
 		} else {
 			// RPC mode supports Pi's standard dialogs, but not custom TUI components.
-			approved = await ctx.ui.confirm("Approve command?", `${reason}\n\n${command}`);
+			approved = await ctx.ui.confirm("Approve command?", `${reason}\n\n${command}`, { signal: ctx.signal });
 		}
 
 		if (!approved) return { block: true, reason: `User declined command: ${reason}` };

@@ -90,7 +90,7 @@ export default function askUser(pi: ExtensionAPI) {
 		parameters: AskUserParams,
 		executionMode: "sequential",
 
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const options = params.options ?? [];
 
 			if (!ctx.hasUI) {
@@ -100,7 +100,7 @@ export default function askUser(pi: ExtensionAPI) {
 			// RPC supports Pi's standard dialogs, but not custom TUI components.
 			if (ctx.mode === "rpc") {
 				if (options.length === 0) {
-					const answer = await ctx.ui.editor(params.question, "");
+					const answer = await ctx.ui.input(params.question, "Type your response", { signal });
 					if (answer === undefined) return resultFor(params.question, options, "cancelled", null);
 					const trimmed = answer.trim();
 					if (!trimmed) return resultFor(params.question, options, "cancelled", null);
@@ -110,10 +110,10 @@ export default function askUser(pi: ExtensionAPI) {
 				let customChoice = CUSTOM_OPTION;
 				while (options.includes(customChoice)) customChoice += " (custom)";
 				const choices = [...options, customChoice];
-				const choice = await ctx.ui.select(params.question, choices);
+				const choice = await ctx.ui.select(params.question, choices, { signal });
 				if (choice === undefined) return resultFor(params.question, options, "cancelled", null);
 				if (choice === customChoice) {
-					const answer = await ctx.ui.editor("Your response", "");
+					const answer = await ctx.ui.input("Your response", "Type your response", { signal });
 					if (answer === undefined) return resultFor(params.question, options, "cancelled", null);
 					const trimmed = answer.trim();
 					if (!trimmed) return resultFor(params.question, options, "cancelled", null);
@@ -143,8 +143,16 @@ export default function askUser(pi: ExtensionAPI) {
 				function finish(result: UserResponse | null) {
 					if (finished) return;
 					finished = true;
+					signal?.removeEventListener("abort", onAbort);
 					done(result);
 				}
+
+				function onAbort() {
+					finish(null);
+				}
+
+				if (signal?.aborted) finish(null);
+				else signal?.addEventListener("abort", onAbort, { once: true });
 
 				const editorTheme: EditorTheme = {
 					borderColor: (text) => theme.fg("accent", text),
@@ -321,6 +329,7 @@ export default function askUser(pi: ExtensionAPI) {
 					},
 					dispose() {
 						finished = true;
+						signal?.removeEventListener("abort", onAbort);
 						clearCache();
 					},
 				};

@@ -16,7 +16,7 @@ For custom TUI work, also read `docs/tui.md` and any linked keybinding/theme doc
 
 ## Compatibility baseline
 
-The extensions were last reviewed against Pi `0.86.0`. Before a future upgrade, read the installed package's `CHANGELOG.md` from this baseline forward, then re-run the extension load checks and targeted tests below. The Pi `0.86.0` breaking changes affect custom provider streams, JSON compatibility for tool calls/results, and `user_bash` handlers. This repository has no custom provider or `user_bash` implementation; custom tool parameters and details must remain JSON-compatible. Custom TUI components must honor the injected `KeybindingsManager` rather than hard-coded keys.
+The extensions were last reviewed against Pi `0.87.1`. Before a future upgrade, read the installed package's `CHANGELOG.md` from this baseline forward, then re-run the extension load checks and targeted tests below. The Pi `0.86.0` breaking changes affect custom provider streams, JSON compatibility for tool calls/results, and `user_bash` handlers; Pi `0.87.0` adds context-edit entries and actionable lifecycle boundaries. This repository has no custom provider, context-entry switch, or `user_bash` implementation; custom tool parameters and details must remain JSON-compatible. Custom TUI components must honor the injected `KeybindingsManager` rather than hard-coded keys.
 
 ## Repository layout
 
@@ -75,7 +75,7 @@ npm ci
 
 Use `npm ci` for normal setup. Use `npm install` only when intentionally updating dependencies, and commit `package.json` and `package-lock.json` together. Do not edit or commit `mcp-bridge/node_modules/`.
 
-`mcp-bridge/config.json` and local backup variants may contain secrets. Never read them unless the user explicitly asks, and never print or commit their contents. Use `config.json.example` and `config.schema.json` for documented configuration changes. MCP calls may require a live configured server, so clearly report when validation is limited to static checks.
+`mcp-bridge/config.json` and local backup variants may contain secrets. Never read them unless the user explicitly asks, and never print or commit their contents. Use `config.json.example` and `config.schema.json` for documented configuration changes. Run `node mcp-bridge/test.ts` for pagination, name-collision, and result-conversion regression coverage. MCP calls may require a live configured server, so clearly report when validation is limited to static checks.
 
 ### Extension load checks
 

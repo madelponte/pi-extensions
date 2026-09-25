@@ -17,6 +17,13 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+	listAllMcpTools,
+	modelContentForMcpResult,
+	normalizeToolName,
+	reserveExposedName,
+	type DiscoveredTool,
+} from "./helpers.ts";
 
 const EXT_DIR = dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = join(EXT_DIR, "config.json");
@@ -31,12 +38,6 @@ type Config = {
 	disabledTools?: string[];
 	allowedTools?: string[];
 	server: ServerConfig;
-};
-
-type DiscoveredTool = {
-	name: string;
-	description?: string;
-	inputSchema?: Record<string, unknown>;
 };
 
 type ToolRecord = {
@@ -87,16 +88,6 @@ function cleanProcessEnv(): Record<string, string> {
 	);
 }
 
-function normalizeToolName(name: string): string {
-	return name.replace(/[^A-Za-z0-9_]/g, "_").replace(/^([^A-Za-z_])/, "_$1");
-}
-
-function exposedName(serverName: string, prefix: string): string {
-	const cleanServerName = normalizeToolName(serverName);
-	const cleanPrefix = normalizeToolName(prefix).replace(/^_+|_+$/g, "");
-	return cleanPrefix ? `${cleanPrefix}_${cleanServerName}` : cleanServerName;
-}
-
 function matchesName(value: string, serverName: string, publicName: string): boolean {
 	return value === serverName || value === publicName;
 }
@@ -118,19 +109,6 @@ function shouldExpose(tool: DiscoveredTool, publicName: string, config: Config):
 function inputSchemaToTypeBox(schema: Record<string, unknown> | undefined) {
 	if (!schema || Object.keys(schema).length === 0) return Type.Object({});
 	return Type.Unsafe(schema as any);
-}
-
-function summarizeMcpContent(content: unknown): string {
-	if (!Array.isArray(content)) return JSON.stringify(content, null, 2) ?? String(content ?? "");
-	return content
-		.map((part) => {
-			if (!part || typeof part !== "object") return String(part);
-			const item = part as Record<string, unknown>;
-			if (item.type === "text") return String(item.text ?? "");
-			return JSON.stringify(item, null, 2);
-		})
-		.filter(Boolean)
-		.join("\n\n");
 }
 
 async function truncateForModel(text: string, toolName: string) {
@@ -180,6 +158,7 @@ export default function mcpBridgeExtension(pi: ExtensionAPI) {
 	let client: Client | undefined;
 	let records: ToolRecord[] = [];
 	const registeredToolNames = new Set<string>();
+	const registeredPublicNameByServer = new Map<string, string>();
 
 	async function closeClient() {
 		const oldClient = client;
@@ -210,14 +189,21 @@ export default function mcpBridgeExtension(pi: ExtensionAPI) {
 		}
 
 		const prefix = config.prefix ?? "mcp";
-		const list = await nextClient.listTools();
-		const tools = (list.tools ?? []) as DiscoveredTool[];
-		const seenPublicNames = new Set<string>();
+		const tools = await listAllMcpTools(nextClient);
+		const reservedNames = new Set<string>(
+			pi.getAllTools()
+				.map((tool) => tool.name)
+				.filter((name) => !registeredToolNames.has(name)),
+		);
+		for (const name of registeredToolNames) reservedNames.add(name);
 
 		for (const tool of tools) {
-			let publicName = exposedName(tool.name, prefix);
-			if (seenPublicNames.has(publicName)) publicName = `${publicName}_${seenPublicNames.size + 1}`;
-			seenPublicNames.add(publicName);
+			const registrationKey = `${prefix}\u0000${tool.name}`;
+			let publicName = registeredPublicNameByServer.get(registrationKey);
+			if (!publicName) {
+				publicName = reserveExposedName(tool.name, prefix, reservedNames);
+				registeredPublicNameByServer.set(registrationKey, publicName);
+			}
 
 			const description = tool.description || `Call MCP server tool ${tool.name}.`;
 			const disabledReason = shouldExpose(tool, publicName, config);
@@ -239,9 +225,15 @@ export default function mcpBridgeExtension(pi: ExtensionAPI) {
 						{ signal },
 					);
 
-					const summary = await truncateForModel(summarizeMcpContent((result as any).content), tool.name);
-					if ((result as any).isError) {
-						throw new Error(`MCP tool ${tool.name} failed: ${summary.text}`);
+					const immediateResult = result as {
+						content?: unknown;
+						structuredContent?: unknown;
+						isError?: boolean;
+					};
+					const modelContent = modelContentForMcpResult(immediateResult);
+					const summary = await truncateForModel(modelContent.text, tool.name);
+					if (immediateResult.isError) {
+						throw new Error(`MCP tool ${tool.name} failed: ${summary.text || "No error details returned."}`);
 					}
 					const details: McpToolDetails = {
 						serverTool: tool.name,
@@ -252,7 +244,15 @@ export default function mcpBridgeExtension(pi: ExtensionAPI) {
 						details.fullOutputPath = summary.fullOutputPath;
 					}
 					return {
-						content: [{ type: "text", text: summary.text }],
+						content: [
+							{
+								type: "text",
+								text: summary.text || (modelContent.images.length > 0
+									? "MCP tool returned image content."
+									: "MCP tool completed without output."),
+							},
+							...modelContent.images,
+						],
 						details,
 					};
 				},
@@ -260,7 +260,7 @@ export default function mcpBridgeExtension(pi: ExtensionAPI) {
 		}
 
 		const enabledCount = records.filter((record) => !record.disabledReason).length;
-		ctx.ui?.notify?.(`MCP bridge: registered ${enabledCount}/${records.length} tools.`, "info");
+		ctx.ui?.notify?.(`MCP bridge: exposed ${enabledCount}/${records.length} tools.`, "info");
 	}
 
 	pi.on("session_start", async (_event, ctx) => {

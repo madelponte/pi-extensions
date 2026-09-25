@@ -13,7 +13,7 @@
 
 const READ_ONLY_GIT_COMMANDS = new Set([
 	"annotate", "blame", "count-objects", "describe", "diff", "diff-tree", "for-each-ref", "fsck",
-	"grep", "help", "log", "ls-files", "ls-remote", "ls-tree", "merge-base", "name-rev", "reflog",
+	"grep", "help", "log", "ls-files", "ls-remote", "ls-tree", "merge-base", "name-rev",
 	"rev-list", "rev-parse", "shortlog", "show", "show-ref", "status", "version", "whatchanged",
 ]);
 
@@ -23,7 +23,7 @@ const READ_ONLY_GIT_COMMANDS = new Set([
  * backtick), a quote (covers `sh -c 'rm ...'`), or a newline (multi-line
  * commands).
  */
-const COMMAND_BOUNDARY = String.raw`(?:^|[;&|(\n\`'"]|\$\()\s*`;
+const COMMAND_BOUNDARY = String.raw`(?:^|[;&|(\n\`'"{}]|\$\(|\b(?:then|do|else)\b)\s*`;
 
 /** A `VAR=value` environment assignment token. */
 const ENV_ASSIGN = String.raw`\b[A-Za-z_][A-Za-z0-9_]*=\S*`;
@@ -52,8 +52,10 @@ const GIT_WRAPPER =
  *
  * Group 1 is always the argument text following `git`.
  */
+const EXECUTABLE_PATH = String.raw`(?:[^\s;&|()]+/)*`;
+
 const GIT_INVOCATION = new RegExp(
-	`(?:${COMMAND_BOUNDARY}|${GIT_WRAPPER})git\\b(?![-.@])([^\\n;&|]*)`,
+	`(?:${COMMAND_BOUNDARY}|${GIT_WRAPPER})${EXECUTABLE_PATH}git\\b(?![-.@])([^\\n;&|]*)`,
 	"gi",
 );
 
@@ -62,7 +64,6 @@ const RM_INVOCATION = new RegExp(
 	"gi",
 );
 
-const EXECUTABLE_PATH = String.raw`(?:[^\s;&|()]+/)*`;
 const COMMAND_WRAPPER = String.raw`command(?:\s+-\S+)*\s+`;
 const ENV_COMMAND_WRAPPER = String.raw`env(?:\s+(?:${ENV_ASSIGN}|-\S+(?:\s+\S+)?))*\s+`;
 const OPTIONAL_COMMAND_WRAPPER = `(?:(?:${COMMAND_WRAPPER})|(?:${ENV_COMMAND_WRAPPER}))?`;
@@ -71,6 +72,7 @@ const DESTRUCTIVE_PATTERNS: Array<[RegExp, string]> = [
 	// Alternate deletion forms that do not go through the rm parser above.
 	[new RegExp(`${COMMAND_BOUNDARY}${OPTIONAL_COMMAND_WRAPPER}${EXECUTABLE_PATH}unlink\\b`, "i"), "file deletion"],
 	[new RegExp(`${COMMAND_BOUNDARY}(?:${COMMAND_WRAPPER}|${ENV_COMMAND_WRAPPER})${EXECUTABLE_PATH}(?:rm|rmdir)\\b`, "i"), "file deletion"],
+	[new RegExp(`${COMMAND_BOUNDARY}(?:${ENV_ASSIGN}\\s+)+${EXECUTABLE_PATH}(?:rm|rmdir)\\b`, "i"), "file deletion"],
 	[new RegExp(`${COMMAND_BOUNDARY}(?:[^\\s;&|()]+/)+(?:rm|rmdir)\\b`, "i"), "file deletion"],
 	[new RegExp(`${COMMAND_BOUNDARY}${OPTIONAL_COMMAND_WRAPPER}${EXECUTABLE_PATH}xargs\\b[^\\n;&|]*\\b(?:rm|rmdir)\\b`, "i"), "xargs file deletion"],
 	[new RegExp(`${COMMAND_BOUNDARY}${OPTIONAL_COMMAND_WRAPPER}${EXECUTABLE_PATH}rsync\\b[^\\n;&|]*\\s--delete(?:-\\S+)?\\b`, "i"), "rsync deletion"],
@@ -179,10 +181,18 @@ export function gitInvocationReason(command: string): string | undefined {
 		if (READ_ONLY_GIT_COMMANDS.has(subcommand)) continue;
 		if (subcommand === "branch" && (args.length === 0 || args.every((arg) => /^(--list|-l|--all|-a|--remotes|-r|--show-current|--contains|--no-contains|--merged|--no-merged|--sort=|--format=|--column|--no-column)/.test(arg)))) continue;
 		if (subcommand === "tag" && (args.length === 0 || args.some((arg) => arg === "--list" || arg === "-l"))) continue;
-		if (subcommand === "remote" && (args.length === 0 || ["-v", "show", "get-url"].includes(args[0]))) continue;
+		if (subcommand === "reflog" && (args.length === 0 || args[0] === "show")) continue;
+		if (subcommand === "remote") {
+			const operationArgs = args.filter((arg) => arg !== "-v" && arg !== "--verbose");
+			if (operationArgs.length === 0 || ["show", "get-url"].includes(operationArgs[0])) continue;
+		}
 		if (subcommand === "stash" && ["list", "show"].includes(args[0])) continue;
 		if (subcommand === "worktree" && args[0] === "list") continue;
-		if (subcommand === "config" && args.some((arg) => /^(--get|--get-all|--get-regexp|--list|-l|--show-origin|--show-scope)$/.test(arg))) continue;
+		if (subcommand === "config") {
+			const hasGetter = args.some((arg) => /^(--get|--get-all|--get-regexp|--get-urlmatch|--list|-l)$/.test(arg));
+			const positional = args.filter((arg) => !arg.startsWith("-"));
+			if (hasGetter || positional.length <= 1) continue;
+		}
 		return `Git command may change repository state: git ${subcommand}`;
 	}
 	return undefined;
