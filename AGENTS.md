@@ -16,14 +16,13 @@ For custom TUI work, also read `docs/tui.md` and any linked keybinding/theme doc
 
 ## Compatibility baseline
 
-The extensions were last reviewed against Pi `0.87.1`. Before a future upgrade, read the installed package's `CHANGELOG.md` from this baseline forward, then re-run the extension load checks and targeted tests below. The Pi `0.86.0` breaking changes affect custom provider streams, JSON compatibility for tool calls/results, and `user_bash` handlers; Pi `0.87.0` adds context-edit entries and actionable lifecycle boundaries. This repository has no custom provider, context-entry switch, or `user_bash` implementation; custom tool parameters and details must remain JSON-compatible. Custom TUI components must honor the injected `KeybindingsManager` rather than hard-coded keys.
+The extensions were last reviewed against Pi `0.99.2`. Before a future upgrade, read the installed package's `CHANGELOG.md` from this baseline forward, then re-run the extension load checks and targeted tests below. Pi `0.99.0` added native MCP, codemode, tool exposure, namespaces, and asynchronously registered MCP tools. Tool profiles must identify native MCP tools from their namespace/source metadata and enforce restrictive profiles at call time because `codemode` and `deferred` tools remain callable while inactive. Custom tool parameters and details must remain JSON-compatible. Custom TUI components must honor the injected `KeybindingsManager` rather than hard-coded keys.
 
 ## Repository layout
 
-- `ask-user/index.ts` — registers the sequential, blocking `ask_user` tool. TUI mode uses a custom focus-aware component; RPC mode uses standard `select`/`editor` dialogs; non-UI modes return an unavailable result instead of hanging.
-- `mcp-bridge/` — starts one MCP client during `session_start`, discovers the server's tools, and registers them dynamically. It closes the client during `session_shutdown`, truncates large model-facing output, and writes full truncated output to a private temporary file through Pi's file mutation queue. See its `README.md`, schema, and example config.
+- `ask-user/index.ts` — registers the sequential, blocking `ask_user` tool. TUI mode uses a custom focus-aware component; RPC mode uses standard `select`/`input` dialogs; non-UI modes return an unavailable result instead of hanging.
 - `safety-guard/` — intercepts typed built-in Bash tool calls and asks for approval before risky commands. Command analysis is isolated in `guard.ts` and covered by `test.ts`.
-- `tool-profiles/` — provides `/profile` and `/profile-status` commands for switching active tool sets. `main` intentionally means every registered tool, while `no-mcp` identifies MCP tools from their name or Pi `sourceInfo` metadata. Profile state is in memory for the current session runtime.
+- `tool-profiles/` — provides `/profile` and `/profile-status` commands for switching active tool sets. `main` intentionally means every registered tool, while `no-mcp` identifies native and legacy MCP tools from their names, namespaces, and Pi `sourceInfo` metadata. Restrictive profiles are also enforced by a `tool_call` guard so indirect and asynchronously registered tools cannot bypass them. Profile state is in memory for the current session runtime.
 - `LICENSE` — MIT license.
 
 Pi auto-discovers top-level `*.ts` extensions and extension directories containing `index.ts` from this location. After changing extension code, reload Pi with `/reload` before interactive verification.
@@ -64,26 +63,12 @@ The safety guard is a conservative heuristic scanner, not a shell parser. Preser
 
 Add both positive and negative regression cases for scanner changes. Test harmless/nonexistent paths during interactive confirmation checks so accidental approval cannot damage data.
 
-### MCP bridge
-
-The MCP bridge has its own pinned dependencies:
-
-```bash
-cd mcp-bridge
-npm ci
-```
-
-Use `npm ci` for normal setup. Use `npm install` only when intentionally updating dependencies, and commit `package.json` and `package-lock.json` together. Do not edit or commit `mcp-bridge/node_modules/`.
-
-`mcp-bridge/config.json` and local backup variants may contain secrets. Never read them unless the user explicitly asks, and never print or commit their contents. Use `config.json.example` and `config.schema.json` for documented configuration changes. Run `node mcp-bridge/test.ts` for pagination, name-collision, and result-conversion regression coverage. MCP calls may require a live configured server, so clearly report when validation is limited to static checks.
-
 ### Extension load checks
 
 Validate that each factory still imports and registers against the installed Pi version without starting a session or making model/MCP calls:
 
 ```bash
 pi --no-extensions --offline --list-models -e ./ask-user/index.ts
-pi --no-extensions --offline --list-models -e ./mcp-bridge/index.ts
 pi --no-extensions --offline --list-models -e ./safety-guard/index.ts
 pi --no-extensions --offline --list-models -e ./tool-profiles/index.ts
 ```
