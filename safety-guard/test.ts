@@ -28,7 +28,7 @@ function shouldAllow(command: string) {
 // Exact-reason checks also guard the regex group structure (args must be group 1).
 shouldFlag("git push", GIT("push"));
 shouldFlag("git reset --hard HEAD~1", GIT("reset"));
-shouldFlag("git -c user.name=x push origin main", GIT("push"));
+shouldFlag("git -c color.ui=never push origin main", GIT("push"));
 shouldFlag("sudo -u deploy git push origin main", GIT("push"));
 shouldAllow("rm -rf /tmp/x");
 shouldFlag("echo done\nrm -rf /home/user", "file deletion");
@@ -209,6 +209,137 @@ shouldAllow("git reflog show HEAD");
 shouldAllow("git remote --verbose");
 shouldAllow("git remote -v show origin");
 shouldAllow("git config --show-origin core.hooksPath");
+
+// --- shell control words, prefix commands, and escaped names ---------------
+shouldFlag("if rm -rf /home/user; then :; fi", "file deletion");
+shouldFlag("elif rm -rf /home/user", "file deletion");
+shouldFlag("while rm -rf /home/user; do :; done", "file deletion");
+shouldFlag("until rm -rf /home/user; do :; done", "file deletion");
+shouldFlag('case "$answer" in yes) rm -rf /home/user;; esac', "file deletion");
+shouldFlag('case "$answer" in yes|y) git push;; esac', GIT("push"));
+shouldFlag('case "$answer" in\n  yes) git push;;\nesac', GIT("push"));
+shouldFlag('case "$answer" in yes) echo ok;; no) rm -rf /home/user;; esac', "file deletion");
+shouldFlag('case "$answer" in yes) echo ok ;& no) git push;; esac', GIT("push"));
+shouldFlag('case "$answer" in yes) echo ok ;;& no) rm -rf /home/user;; esac', "file deletion");
+shouldFlag("! rm -rf /home/user", "file deletion");
+shouldFlag("\\rm -rf /home/user", "file deletion");
+shouldFlag("time rm -rf /home/user", "file deletion");
+shouldFlag("nohup rm -rf /home/user", "file deletion");
+shouldFlag("nice -n 10 rm -rf /home/user", "file deletion");
+shouldFlag("timeout 60 rm -rf /home/user", "file deletion");
+shouldFlag("exec rm -rf /home/user", "file deletion");
+shouldFlag("/usr/bin/env rm -rf /home/user", "file deletion");
+shouldFlag("nohup rm -rf /tmp/x", "file deletion"); // wrapped forms stay guarded
+shouldFlag("timeout 5 kill 123", "process termination");
+shouldFlag("if git push; then :; fi", GIT("push"));
+shouldFlag("! git push", GIT("push"));
+shouldFlag("until git push; do sleep 1; done", GIT("push"));
+shouldFlag("time git push", GIT("push"));
+shouldFlag("nohup git push", GIT("push"));
+shouldFlag("timeout 60 git push", GIT("push"));
+shouldFlag("\\git push", GIT("push"));
+shouldFlag("xargs git push", GIT("push"));
+shouldFlag("nice -n 5 env FOO=1 git push", GIT("push"));
+shouldAllow("if rm -f /tmp/x; then :; fi");
+shouldAllow('case "$answer" in yes) rm -f /tmp/x;; no) echo kept;; esac');
+shouldAllow("\\rm -f /tmp/x");
+shouldAllow("! rm -f /tmp/x");
+shouldAllow("echo nohup rm -rf /home/user");
+shouldAllow("time make test");
+shouldAllow("nohup npm start");
+shouldAllow("time git status");
+shouldAllow("timeout 10 git log -1");
+shouldAllow("if git diff --quiet; then echo clean; fi");
+shouldAllow('echo "$(date) rm -rf /home/user"');
+shouldAllow('echo "$(date) git push"');
+
+// --- git config: mutating forms ------------------------------------------------
+shouldFlag("git config --unset user.name", GIT("config"));
+shouldFlag("git config --unset-all user.name", GIT("config"));
+shouldFlag("git config --remove-section core", GIT("config"));
+shouldFlag("git config --edit", GIT("config"));
+shouldFlag("git config -e", GIT("config"));
+shouldFlag("git config --add remote.origin.fetch x", GIT("config"));
+shouldFlag("git config set user.name bob", GIT("config"));
+shouldFlag("git config unset user.name", GIT("config"));
+shouldFlag("git config edit", GIT("config"));
+shouldAllow("git config get user.name");
+shouldAllow("git config list");
+shouldAllow("git config --file .gitmodules --get-regexp path");
+shouldAllow("git config --type bool core.bare");
+
+// --- git: config overrides and file-writing options ---------------------------
+const GIT_OVERRIDE = (option: string) => `Git configuration override may run commands: git ${option}`;
+const GIT_WRITE = (command: string) => `Git command may write files or run commands: git ${command}`;
+shouldFlag("git -c core.fsmonitor=./hook.sh status", GIT_OVERRIDE("-c core.fsmonitor"));
+shouldFlag("git -c core.pager=less log", GIT_OVERRIDE("-c core.pager"));
+shouldFlag("git -c alias.st=status st", GIT_OVERRIDE("-c alias.st"));
+shouldFlag("git --config-env=core.pager=PAGER log", GIT_OVERRIDE("--config-env"));
+shouldFlag("git --exec-path=/tmp/bin status", GIT_OVERRIDE("--exec-path"));
+shouldFlag("git diff --output=/home/user/.bashrc", GIT_WRITE("diff --output"));
+shouldFlag("git log --output /tmp/log.txt", GIT_WRITE("log --output"));
+shouldFlag("git grep -Ovim TODO", GIT_WRITE("grep --open-files-in-pager"));
+shouldFlag("git grep --open-files-in-pager=vim TODO", GIT_WRITE("grep --open-files-in-pager"));
+shouldFlag("git diff --ext-diff", GIT_WRITE("diff --ext-diff"));
+shouldFlag("git log --ext-diff -p", GIT_WRITE("log --ext-diff"));
+shouldFlag("git show --textconv HEAD:file", GIT_WRITE("show --textconv"));
+shouldFlag("git fsck --lost-found", GIT_WRITE("fsck --lost-found"));
+shouldAllow("git -c color.ui=never log --oneline");
+shouldAllow("git -c core.pager=cat log");
+shouldAllow("git -c core.quotepath=off status");
+shouldAllow("git diff --output-indicator-new=+ HEAD");
+shouldAllow("git diff --no-ext-diff");
+shouldAllow("git show --no-textconv HEAD:file");
+shouldAllow("git fsck --no-dangling");
+shouldAllow("git log -O order.txt -p");
+
+// --- git branch and other read-only commands -----------------------------------
+shouldFlag("git branch new-feature", GIT("branch"));
+shouldFlag("git branch -vd feature", GIT("branch"));
+shouldFlag("git branch -r newname", GIT("branch"));
+shouldFlag("git branch --set-upstream-to=origin/main", GIT("branch"));
+shouldAllow("git branch -v");
+shouldAllow("git branch -vv");
+shouldAllow("git branch --contains HEAD~1");
+shouldAllow("git branch --merged main");
+shouldAllow("git branch --list 'feature/*'");
+shouldAllow("git cat-file -p HEAD");
+shouldAllow("git show-branch");
+shouldAllow("git check-ignore -v build/");
+
+// --- container, Kubernetes, find, and privilege forms --------------------------
+shouldFlag("kubectl -n prod delete pod web-1", "Kubernetes resource deletion");
+shouldFlag("kubectl --context=prod delete ns app", "Kubernetes resource deletion");
+shouldFlag("kubectl --context prod delete ns app", "Kubernetes resource deletion");
+shouldFlag("docker rm -f web", "container data deletion");
+shouldFlag("docker rmi web:latest", "container data deletion");
+shouldFlag("docker volume prune -f", "container data deletion");
+shouldFlag("docker -H ssh://host container prune", "container data deletion");
+shouldFlag("docker compose down -v", "container data deletion");
+shouldFlag("docker-compose down --volumes", "container data deletion");
+shouldFlag("podman system reset", "container data deletion");
+shouldFlag("find . -exec unlink {} \;", "find file deletion");
+shouldFlag("find . -ok rm {} \;", "find file deletion");
+shouldFlag("find . -okdir rm {} \;", "find file deletion");
+shouldFlag("rsync -a --remove-source-files src/ dest/", "rsync deletion");
+shouldFlag("pkexec apt update", "privilege escalation");
+shouldFlag("run0 systemctl restart nginx", "privilege escalation");
+shouldFlag("su root -lc id", "privilege escalation");
+shouldAllow("docker run --rm alpine true");
+shouldAllow("docker compose down");
+shouldAllow("kubectl -n prod get pods");
+shouldAllow("su -l deploy");
+
+// --- patterns only match at command positions -----------------------------------
+shouldAllow("grep -rn kill src/");
+shouldAllow("npm run kill-port");
+shouldAllow("kill-port 3000");
+shouldAllow("ls ~/killall");
+shouldAllow("echo kill");
+shouldAllow("grep -r shred docs/");
+shouldAllow("man mkfs");
+shouldAllow("echo dropdb");
+shouldAllow("chmod -r ./secret.txt"); // removes read permission; not recursive
 
 // --- plain commands -----------------------------------------------------------
 shouldAllow("ls -la");

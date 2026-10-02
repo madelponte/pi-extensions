@@ -16,13 +16,12 @@ For custom TUI work, also read `docs/tui.md` and any linked keybinding/theme doc
 
 ## Compatibility baseline
 
-The extensions were last reviewed against Pi `0.99.2`. Before a future upgrade, read the installed package's `CHANGELOG.md` from this baseline forward, then re-run the extension load checks and targeted tests below. Pi `0.99.0` added native MCP, codemode, tool exposure, namespaces, and asynchronously registered MCP tools. Tool profiles must identify native MCP tools from their namespace/source metadata and enforce restrictive profiles at call time because `codemode` and `deferred` tools remain callable while inactive. Custom tool parameters and details must remain JSON-compatible. Custom TUI components must honor the injected `KeybindingsManager` rather than hard-coded keys.
+The extensions were last reviewed against Pi `1.0.0`. Before a future upgrade, read the installed package's `CHANGELOG.md` from this baseline forward, then re-run the extension load checks and targeted tests below. Pi 1.0 makes fullscreen TUI mode the default, so custom components must remain width-bounded and work in both fullscreen and regular modes. Custom tool parameters and details must remain JSON-compatible. User-interaction tools should use `model-only` exposure. Custom TUI components must honor the injected `KeybindingsManager` for standard navigation and selection actions; `ask-user`'s direct 1–9 choice shortcuts and `safety-guard`'s deliberate `y`/`n` decisions are intentional fixed-key exceptions.
 
 ## Repository layout
 
-- `ask-user/index.ts` — registers the sequential, blocking `ask_user` tool. TUI mode uses a custom focus-aware component; RPC mode uses standard `select`/`input` dialogs; non-UI modes return an unavailable result instead of hanging.
+- `ask-user/index.ts` — registers the sequential, model-only `ask_user` tool. TUI mode uses a custom focus-aware component; RPC mode uses standard `select`/`input` dialogs; non-UI modes return an unavailable result instead of hanging.
 - `safety-guard/` — intercepts typed built-in Bash tool calls and asks for approval before risky commands. Command analysis is isolated in `guard.ts` and covered by `test.ts`.
-- `tool-profiles/` — provides `/profile` and `/profile-status` commands for switching active tool sets. `main` intentionally means every registered tool, while `no-mcp` identifies native and legacy MCP tools from their names, namespaces, and Pi `sourceInfo` metadata. Restrictive profiles are also enforced by a `tool_call` guard so indirect and asynchronously registered tools cannot bypass them. Profile state is in memory for the current session runtime.
 - `LICENSE` — MIT license.
 
 Pi auto-discovers top-level `*.ts` extensions and extension directories containing `index.ts` from this location. After changing extension code, reload Pi with `/reload` before interactive verification.
@@ -60,6 +59,7 @@ The safety guard is a conservative heuristic scanner, not a shell parser. Preser
 - Unknown or mutating Git invocations require approval; known read-only Git operations do not.
 - Alternate deletion, privilege escalation, recursive permission/ownership changes, and ACL changes require approval.
 - Non-UI modes fail closed when approval would be required.
+- TUI approval requires a deliberate `y` after a pause in typing; Enter and typed-ahead keys must never approve. The fixed `y`/`n` decision keys are intentional; navigation and cancellation still honor the injected `KeybindingsManager`.
 
 Add both positive and negative regression cases for scanner changes. Test harmless/nonexistent paths during interactive confirmation checks so accidental approval cannot damage data.
 
@@ -70,10 +70,9 @@ Validate that each factory still imports and registers against the installed Pi 
 ```bash
 pi --no-extensions --offline --list-models -e ./ask-user/index.ts
 pi --no-extensions --offline --list-models -e ./safety-guard/index.ts
-pi --no-extensions --offline --list-models -e ./tool-profiles/index.ts
 ```
 
-`ask-user` and `tool-profiles` currently have no automated test suite. Validate their control flow statically, then use `/reload` and exercise the affected tool or slash command interactively when practical. For `ask-user`, cover open-ended and multiple-choice paths, cancellation, custom responses, narrow rendering, remapped selection keys, RPC dialogs, and non-UI fallback.
+`ask-user` currently has no automated test suite. Validate its control flow statically, then use `/reload` and exercise the affected tool interactively when practical. For `ask-user`, cover open-ended and multiple-choice paths, cancellation, custom responses, narrow rendering, remapped selection keys, RPC dialogs, and non-UI fallback.
 
 ## Finishing work
 

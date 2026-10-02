@@ -1,6 +1,13 @@
-import { isToolCallEventType, keyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { isToolCallEventType, keyHint, keyText, rawKeyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { approvalReason } from "./guard.ts";
+
+/**
+ * Minimum pause before a `y`/`n` keypress counts as a decision. Keys typed
+ * without a pause, such as a message being typed when the prompt appeared,
+ * are ignored.
+ */
+const DELIBERATE_KEY_PAUSE_MS = 400;
 
 function commandForDisplay(command: string): string {
 	return command
@@ -30,6 +37,7 @@ export default function safetyGuard(pi: ExtensionAPI) {
 				let maxScrollOffset = 0;
 				let pageSize = 1;
 				let finished = false;
+				let lastInputAt = Date.now();
 				let cachedWidth: number | undefined;
 				let cachedHeight: number | undefined;
 				let cachedLines: string[] | undefined;
@@ -98,8 +106,8 @@ export default function safetyGuard(pi: ExtensionAPI) {
 							keyHint("tui.select.pageDown", "page down"),
 						].join(" • ");
 						const decisionHelp = [
-							keyHint("tui.select.confirm", "approve"),
-							keyHint("tui.select.cancel", "deny"),
+							rawKeyHint("y", "approve"),
+							rawKeyHint(`n/${keyText("tui.select.cancel")}`, "deny"),
 						].join(" • ");
 						const lines = [
 							theme.fg("warning", "─".repeat(renderWidth)),
@@ -119,10 +127,18 @@ export default function safetyGuard(pi: ExtensionAPI) {
 					},
 					handleInput(data: string) {
 						if (finished) return;
-						if (keybindings.matches(data, "tui.select.confirm")) {
-							finish(true);
-						} else if (keybindings.matches(data, "tui.select.cancel")) {
+						// The prompt takes focus as soon as it appears, so keys meant for a
+						// message being typed arrive here. Approval therefore needs a
+						// deliberate `y` after a pause rather than Enter or a typed-ahead key.
+						const now = Date.now();
+						const deliberate = now - lastInputAt >= DELIBERATE_KEY_PAUSE_MS;
+						lastInputAt = now;
+						if (keybindings.matches(data, "tui.select.cancel")) {
 							finish(false);
+						} else if (matchesKey(data, "y") || matchesKey(data, "shift+y")) {
+							if (deliberate) finish(true);
+						} else if (matchesKey(data, "n") || matchesKey(data, "shift+n")) {
+							if (deliberate) finish(false);
 						} else if (keybindings.matches(data, "tui.select.up")) {
 							scrollBy(-1);
 						} else if (keybindings.matches(data, "tui.select.down")) {
