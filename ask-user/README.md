@@ -1,5 +1,7 @@
 # Ask User
 
+> Compatibility: reviewed against Pi 1.2.0.
+
 Registers the sequential, model-only `ask_user` tool for blocking clarification questions. Model-only exposure keeps the tool available to the model while preventing nested tool and codemode calls from opening a blocking user interaction.
 
 - Multiple-choice questions take two to eight options and always include a custom-response option.

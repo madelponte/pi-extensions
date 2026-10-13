@@ -8,15 +8,15 @@ This repository contains global extensions for the Pi coding agent. A single roo
 
 Before changing an extension, read Pi's extension documentation completely and follow the relevant cross-references and examples. In this environment, the primary references are:
 
-- Extension API: `/home/mdelponte/.local/share/pi-node/node-v22.23.1-linux-x64/lib/node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
-- Additional docs: `/home/mdelponte/.local/share/pi-node/node-v22.23.1-linux-x64/lib/node_modules/@earendil-works/pi-coding-agent/docs/`
-- Extension examples: `/home/mdelponte/.local/share/pi-node/node-v22.23.1-linux-x64/lib/node_modules/@earendil-works/pi-coding-agent/examples/extensions/`
+- Extension API: `/home/mdelponte/.pi/agent/install/releases/1.2.0/node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
+- Additional docs: `/home/mdelponte/.pi/agent/install/releases/1.2.0/node_modules/@earendil-works/pi-coding-agent/docs/`
+- Extension examples: `/home/mdelponte/.pi/agent/install/releases/1.2.0/node_modules/@earendil-works/pi-coding-agent/examples/extensions/`
 
 For custom TUI work, also read `docs/tui.md` and any linked keybinding/theme documentation. Prefer current Pi APIs and examples over assumptions from older versions.
 
 ## Compatibility baseline
 
-The extensions were last reviewed against Pi `1.0.0`. Before a future upgrade, read the installed package's `CHANGELOG.md` from this baseline forward, then re-run the extension load checks and targeted tests below. Pi 1.0 makes fullscreen TUI mode the default, so custom components must remain width-bounded and work in both fullscreen and regular modes. Custom tool parameters and details must remain JSON-compatible. User-interaction tools should use `model-only` exposure. Custom TUI components must honor the injected `KeybindingsManager` for standard navigation and selection actions; `ask-user`'s direct 1–9 choice shortcuts and `safety-guard`'s deliberate `y`/`n` decisions are intentional fixed-key exceptions.
+The extensions were last reviewed against Pi `1.2.0`. Before a future upgrade, read the installed package's `CHANGELOG.md` from this baseline forward, then re-run the extension load checks and targeted tests below. Pi 1.0 makes fullscreen TUI mode the default, so custom components must remain width-bounded and work in both fullscreen and regular modes. Custom tool parameters and details must remain JSON-compatible. User-interaction tools should use `model-only` exposure. Custom TUI components must honor the injected `KeybindingsManager` for standard navigation and selection actions; `ask-user`'s direct 1–9 choice shortcuts and `safety-guard`'s deliberate `y`/`n` decisions are intentional fixed-key exceptions.
 
 ## Repository layout
 
@@ -34,10 +34,13 @@ Pi auto-discovers top-level `*.ts` extensions and extension directories containi
 - TypeScript is loaded directly by Pi through jiti; extension code does not need a compile step.
 - Follow the existing style: tabs for indentation, semicolons, double quotes, and type-only imports where appropriate.
 - Use `isToolCallEventType` to narrow built-in tool events.
+- In `before_agent_start` handlers, branch on `event.messageType` before reading user-only `prompt` or `images`; Pi 1.2 also emits this event for custom-message runs.
+- Tools that can invoke other tools must declare `reachesTools`; ordinary tools should omit it.
 - Guard dialogs with `ctx.hasUI`; distinguish TUI-only custom components with `ctx.mode === "tui"`.
 - Start long-lived resources during session lifecycle events, not extension factory initialization, and clean them up in `session_shutdown`.
 - Use TypeBox schemas for custom tool parameters. Keep Google compatibility requirements from Pi's docs in mind when adding enums.
 - Use Pi's output truncation helpers for tools that can return large results. File-mutating custom tools must participate in `withFileMutationQueue`.
+- Components that draw a text cursor must use `CURSOR_MARKER` and `renderFakeCursor()` as documented; wrappers around `Editor` or `Input` must propagate focus.
 - Update the extension's `README.md` whenever configuration, commands, safety policy, or setup behavior changes.
 - Run `git diff --check` before finishing.
 
