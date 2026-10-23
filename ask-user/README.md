@@ -1,6 +1,6 @@
 # Ask User
 
-> Compatibility: reviewed against Pi 1.2.0.
+> Compatibility: reviewed against Pi 1.4.0.
 
 Registers the sequential, model-only `ask_user` tool for blocking clarification questions. Model-only exposure keeps the tool available to the model while preventing nested tool and codemode calls from opening a blocking user interaction.
 

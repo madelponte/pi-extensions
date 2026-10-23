@@ -8,15 +8,15 @@ This repository contains global extensions for the Pi coding agent. A single roo
 
 Before changing an extension, read Pi's extension documentation completely and follow the relevant cross-references and examples. In this environment, the primary references are:
 
-- Extension API: `/home/mdelponte/.pi/agent/install/releases/1.2.0/node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
-- Additional docs: `/home/mdelponte/.pi/agent/install/releases/1.2.0/node_modules/@earendil-works/pi-coding-agent/docs/`
-- Extension examples: `/home/mdelponte/.pi/agent/install/releases/1.2.0/node_modules/@earendil-works/pi-coding-agent/examples/extensions/`
+- Extension API: `/home/mdelponte/.pi/agent/install/releases/1.4.0/node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
+- Additional docs: `/home/mdelponte/.pi/agent/install/releases/1.4.0/node_modules/@earendil-works/pi-coding-agent/docs/`
+- Extension examples: `/home/mdelponte/.pi/agent/install/releases/1.4.0/node_modules/@earendil-works/pi-coding-agent/examples/extensions/`
 
 For custom TUI work, also read `docs/tui.md` and any linked keybinding/theme documentation. Prefer current Pi APIs and examples over assumptions from older versions.
 
 ## Compatibility baseline
 
-The extensions were last reviewed against Pi `1.2.0`. Before a future upgrade, read the installed package's `CHANGELOG.md` from this baseline forward, then re-run the extension load checks and targeted tests below. Pi 1.0 makes fullscreen TUI mode the default, so custom components must remain width-bounded and work in both fullscreen and regular modes. Custom tool parameters and details must remain JSON-compatible. User-interaction tools should use `model-only` exposure. Custom TUI components must honor the injected `KeybindingsManager` for standard navigation and selection actions; `ask-user`'s direct 1–9 choice shortcuts and `safety-guard`'s deliberate `y`/`n` decisions are intentional fixed-key exceptions.
+The extensions were last reviewed against Pi `1.4.0`. Before a future upgrade, read the installed package's `CHANGELOG.md` from this baseline forward, then re-run the extension load checks and targeted tests below. Pi 1.0 makes fullscreen TUI mode the default, so custom components must remain width-bounded and work in both fullscreen and regular modes. Custom tool parameters and details must remain JSON-compatible. User-interaction tools should use `model-only` exposure. Custom TUI components must honor the injected `KeybindingsManager` for standard navigation and selection actions; `ask-user`'s direct 1–9 choice shortcuts and `safety-guard`'s deliberate `y`/`n` decisions are intentional fixed-key exceptions.
 
 ## Repository layout
 

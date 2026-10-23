@@ -1,6 +1,6 @@
 # Safety Guard
 
-> Compatibility: reviewed against Pi 1.2.0.
+> Compatibility: reviewed against Pi 1.4.0.
 
 Confirms before destructive Bash commands and before Git commands that may change repository state. Common read-only Git commands such as `status`, `diff`, `log`, and `show` run without confirmation. Unknown Git subcommands are treated as mutating. In non-UI modes, commands requiring approval are blocked. The guard intercepts Pi's built-in `bash` tool; it does not inspect PowerShell or commands executed by MCP/custom tools.
 
