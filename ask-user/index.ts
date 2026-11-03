@@ -1,4 +1,4 @@
-import { keyHint, rawKeyHint, type ExtensionAPI, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import { rawKeyHint, type ExtensionAPI, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import {
 	CURSOR_MARKER,
 	Editor,
@@ -165,6 +165,13 @@ export default function askUser(pi: ExtensionAPI) {
 
 			const response = await ctx.ui.custom<UserResponse | null>((tui, theme, keybindings, done) => {
 				const hasOptions = options.length > 0;
+				const keybindingHint = (
+					keybinding: Parameters<typeof keybindings.getKeys>[0],
+					description: string,
+				) => {
+					const keys = keybindings.getKeys(keybinding);
+					return keys.length > 0 ? rawKeyHint(keys.join("/"), description) : theme.fg("muted", description);
+				};
 				const customIndex = options.length;
 				let optionIndex = 0;
 				let editing = !hasOptions;
@@ -471,27 +478,34 @@ export default function askUser(pi: ExtensionAPI) {
 				function helpText(scrolling: boolean): string {
 					const hints = editing
 						? [
-							keyHint("tui.input.submit", "submit"),
-							keyHint("tui.input.newLine", "newline"),
-							keyHint("tui.select.cancel", hasOptions ? "return to choices" : "cancel"),
+							keybindingHint("tui.input.submit", "submit"),
+							keybindingHint("tui.input.newLine", "newline"),
+							keybindingHint("tui.select.cancel", hasOptions ? "return to choices" : "cancel"),
 						]
 						: [
-							keyHint("tui.select.up", "up"),
-							keyHint("tui.select.down", "down"),
+							keybindingHint("tui.select.up", "up"),
+							keybindingHint("tui.select.down", "down"),
 							rawKeyHint(`1-${Math.min(customIndex + 1, 9)}`, "choose"),
-							keyHint("tui.select.confirm", "select"),
-							keyHint("tui.select.cancel", "cancel"),
+							keybindingHint("tui.select.confirm", "select"),
+							keybindingHint("tui.select.cancel", "cancel"),
 						];
 					if (scrolling) {
 						if (!hasOptions && editor.getText().length === 0) {
-							hints.push(keyHint("tui.select.up", "scroll up"), keyHint("tui.select.down", "scroll down"));
+							hints.push(
+								keybindingHint("tui.select.up", "scroll up"),
+								keybindingHint("tui.select.down", "scroll down"),
+							);
 						}
-						hints.push(keyHint("tui.select.pageUp", "page up"), keyHint("tui.select.pageDown", "page down"));
+						hints.push(
+							keybindingHint("tui.select.pageUp", "page up"),
+							keybindingHint("tui.select.pageDown", "page down"),
+						);
 					}
 					return hints.join(" • ");
 				}
 
 				return {
+					capturesViewportInput: true,
 					get focused() {
 						return componentFocused;
 					},
@@ -513,6 +527,8 @@ export default function askUser(pi: ExtensionAPI) {
 						clearCache();
 					},
 				};
+			}, {
+				blocked: { kind: "question", message: params.question },
 			});
 
 			if (!response) return resultFor(params.question, options, "cancelled", null);

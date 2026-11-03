@@ -1,4 +1,4 @@
-import { isToolCallEventType, keyHint, keyText, rawKeyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { isToolCallEventType, rawKeyHint, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { approvalReason } from "./guard.ts";
 
@@ -33,6 +33,15 @@ export default function safetyGuard(pi: ExtensionAPI) {
 		if (ctx.mode === "tui") {
 			approved = await ctx.ui.custom<boolean>((tui, theme, keybindings, done) => {
 				const displayCommand = commandForDisplay(command);
+				const keybindingText = (keybinding: Parameters<typeof keybindings.getKeys>[0]) =>
+					keybindings.getKeys(keybinding).join("/");
+				const keybindingHint = (
+					keybinding: Parameters<typeof keybindings.getKeys>[0],
+					description: string,
+				) => {
+					const keys = keybindingText(keybinding);
+					return keys ? rawKeyHint(keys, description) : theme.fg("muted", description);
+				};
 				let scrollOffset = 0;
 				let maxScrollOffset = 0;
 				let pageSize = 1;
@@ -77,6 +86,7 @@ export default function safetyGuard(pi: ExtensionAPI) {
 				}
 
 				return {
+					capturesViewportInput: true,
 					render(width: number): string[] {
 						const terminalHeight = tui.terminal.rows;
 						if (cachedLines && cachedWidth === width && cachedHeight === terminalHeight) return cachedLines;
@@ -100,14 +110,15 @@ export default function safetyGuard(pi: ExtensionAPI) {
 						const endOffset = Math.min(commandLines.length, scrollOffset + pageSize);
 						const fit = (text: string) => truncateToWidth(text, renderWidth, "");
 						const scrollHelp = [
-							keyHint("tui.select.up", "scroll up"),
-							keyHint("tui.select.down", "scroll down"),
-							keyHint("tui.select.pageUp", "page up"),
-							keyHint("tui.select.pageDown", "page down"),
+							keybindingHint("tui.select.up", "scroll up"),
+							keybindingHint("tui.select.down", "scroll down"),
+							keybindingHint("tui.select.pageUp", "page up"),
+							keybindingHint("tui.select.pageDown", "page down"),
 						].join(" • ");
+						const cancelKeys = keybindingText("tui.select.cancel");
 						const decisionHelp = [
 							rawKeyHint("y", "approve"),
-							rawKeyHint(`n/${keyText("tui.select.cancel")}`, "deny"),
+							rawKeyHint(cancelKeys ? `n/${cancelKeys}` : "n", "deny"),
 						].join(" • ");
 						const lines = [
 							theme.fg("warning", "─".repeat(renderWidth)),
@@ -158,6 +169,8 @@ export default function safetyGuard(pi: ExtensionAPI) {
 						cachedLines = undefined;
 					},
 				};
+			}, {
+				blocked: { kind: "permission", message: reason },
 			});
 		} else {
 			// RPC mode supports Pi's standard dialogs, but not custom TUI components.
