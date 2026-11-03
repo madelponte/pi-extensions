@@ -1,6 +1,6 @@
 # Safety Guard
 
-> Compatibility: reviewed against Pi 1.4.0.
+> Compatibility: reviewed against Pi 1.5.0.
 
 Confirms before destructive Bash commands and before Git commands that may change repository state. Common read-only Git commands such as `status`, `diff`, `log`, and `show` run without confirmation. Unknown Git subcommands are treated as mutating. In non-UI modes, commands requiring approval are blocked. The guard intercepts Pi's built-in `bash` tool; it does not inspect PowerShell or commands executed by MCP/custom tools.
 
@@ -25,7 +25,7 @@ Git invocations are detected in command position and after `sudo`/`command`/`env
 
 Detection is a heuristic scanner over the command string, not a shell parser or security sandbox. It errs toward asking (a confirm prompt) rather than missing a destructive command, so occasional false positives are possible. It cannot see inside interpreted payloads such as `node -e "..."` or `curl … | sh`.
 
-In the TUI, approval uses a height-bounded command preview so long commands do not force the terminal to redraw thousands of rows. Scroll by line with the configured selection up/down keys and by page with the configured selection page keys. Approve with `y` and deny with `n` or the configured selection-cancel key; Enter does nothing. Because the prompt takes keyboard focus as soon as it appears, `y` and `n` count only after a short pause in typing, so keys from a message being typed cannot approve or deny the command. The cancel key always denies immediately. RPC mode continues to use Pi's standard confirm dialog. Aborting the active turn closes either prompt and denies the command.
+In the TUI, approval uses a height-bounded command preview so long commands do not force the terminal to redraw thousands of rows. While the prompt is visible, Pi reports that it is blocked on a permission decision. Scroll by line with the configured selection up/down keys and by page with the configured selection page keys. Approve with `y` and deny with `n` or the configured selection-cancel key; Enter does nothing. Because the prompt takes keyboard focus as soon as it appears, `y` and `n` count only after a short pause in typing, so keys from a message being typed cannot approve or deny the command. The cancel key always denies immediately. RPC mode continues to use Pi's standard confirm dialog. Aborting the active turn closes either prompt and denies the command.
 
 ## Layout
 
