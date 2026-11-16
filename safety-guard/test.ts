@@ -6,7 +6,7 @@
  * `node --experimental-strip-types safety-guard/test.ts`.)
  */
 import assert from "node:assert/strict";
-import { approvalReason } from "./guard.ts";
+import { analyzeCommand, approvalReason } from "./guard.ts";
 
 let passed = 0;
 
@@ -345,5 +345,16 @@ shouldAllow("chmod -r ./secret.txt"); // removes read permission; not recursive
 shouldAllow("ls -la");
 shouldAllow("echo hello world");
 shouldAllow("npm install");
+
+// Structured decisions use stable rule identifiers for audit logs and replay.
+assert.deepEqual(analyzeCommand("git push"), {
+	decision: "review",
+	ruleId: "git.state_change",
+	reason: GIT("push"),
+});
+assert.deepEqual(analyzeCommand("git status"), { decision: "allow", ruleId: "git.read_only" });
+assert.deepEqual(analyzeCommand("rm -rf /tmp/generated"), { decision: "allow", ruleId: "deletion.rm_tmp_exception" });
+assert.deepEqual(analyzeCommand("echo hello"), { decision: "allow", ruleId: "allow.no_match" });
+passed += 4;
 
 console.log(`safety-guard: ${passed} cases passed`);

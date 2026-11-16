@@ -5,7 +5,9 @@
  */
 import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
@@ -39,6 +41,8 @@ async function harness(mode: "tui" | "rpc" | "print" = "tui") {
 	let prompts = 0;
 	let renders = 0;
 	let aborts = 0;
+	let toolCalls = 0;
+	let lastToolCallId: string | undefined;
 	const controller = new AbortController();
 	const keyMap: Record<string, string> = {
 		"tui.select.up": "k", "tui.select.down": "j",
@@ -51,7 +55,11 @@ async function harness(mode: "tui" | "rpc" | "print" = "tui") {
 		matches: (data: string, action: string) => data === keyMap[action],
 	};
 	const ctx = {
-		mode, hasUI: mode !== "print", signal: controller.signal,
+		mode, hasUI: mode !== "print", signal: controller.signal, cwd: process.cwd(),
+		sessionManager: {
+			getSessionId: () => "test-session",
+			getSessionFile: () => "/tmp/test-session.jsonl",
+		},
 		abort: () => { aborts++; controller.abort(); },
 		ui: {
 			setStatus: (_key: string, value: string | undefined) => statuses.push(value),
@@ -107,9 +115,19 @@ async function harness(mode: "tui" | "rpc" | "print" = "tui") {
 		get aborts() { return aborts; },
 		rpcRespond: (approved: boolean) => { assert.ok(rpcResponse); rpcResponse(approved); },
 		command: (args: string) => extension.commands.get("safety").handler(args, ctx),
-		tool: (command = "rm /nonexistent-safety-guard-test", toolName = "bash") => emit("tool_call", {
-			type: "tool_call", toolName, toolCallId: "test-call", input: { command },
-		}),
+		tool: (command = "rm /nonexistent-safety-guard-test", toolName = "bash") => {
+			lastToolCallId = `test-call-${++toolCalls}`;
+			return emit("tool_call", {
+				type: "tool_call", toolName, toolCallId: lastToolCallId, input: { command },
+			});
+		},
+		finishTool: (options: { isError?: boolean; durationMs?: number } = {}) => {
+			assert.ok(lastToolCallId);
+			return emit("tool_execution_end", {
+				type: "tool_execution_end", toolName: "bash", toolCallId: lastToolCallId,
+				result: {}, isError: options.isError ?? false, durationMs: options.durationMs,
+			});
+		},
 	};
 }
 
@@ -311,4 +329,66 @@ test("three identical unattended denials stop a retry loop; separate runs reset 
 	await h.tool();
 	assert.equal(h.aborts, 1);
 	assert.match(h.statuses.at(-1)!, /1 blocked/);
+});
+
+test("audit write failures disable logging without changing safety decisions", async (t) => {
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	const directory = await mkdtemp(join(tmpdir(), "safety-guard-extension-audit-error-"));
+	const notDirectory = join(directory, "agent-file");
+	await writeFile(notDirectory, "not a directory");
+	process.env.PI_CODING_AGENT_DIR = notDirectory;
+	t.after(async () => {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		await rm(directory, { recursive: true, force: true });
+	});
+
+	const h = await harness();
+	await h.command("log all");
+	assert.equal(await h.tool("git status"), undefined);
+	assert.match(h.notifications.at(-1)!, /audit logging disabled/i);
+	assert.doesNotMatch(h.statuses.at(-1)!, /audit:/);
+	await h.command("unattended");
+	assert.equal((await h.tool("git push")).block, true);
+});
+
+test("audit modes capture catches or all Bash decisions without affecting guard behavior", async (t) => {
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	const agentDir = await mkdtemp(join(tmpdir(), "safety-guard-extension-audit-"));
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	t.after(async () => {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		await rm(agentDir, { recursive: true, force: true });
+	});
+
+	const h = await harness();
+	await h.command("log catches");
+	assert.match(h.statuses.at(-1)!, /audit:catches/);
+	assert.match(h.notifications.at(-1)!, /Raw Bash commands/);
+	assert.equal(await h.tool("git status"), undefined);
+	await h.finishTool({ durationMs: 2 });
+	await h.command("unattended");
+	assert.equal((await h.tool("git push")).block, true);
+	await h.finishTool({ isError: true });
+
+	await h.command("log all");
+	assert.equal(await h.tool("git status"), undefined);
+	await h.finishTool({ durationMs: 4 });
+	await h.command("log off");
+	assert.equal(await h.tool("echo not-logged"), undefined);
+	await h.finishTool({ durationMs: 1 });
+	await h.emit("session_shutdown");
+
+	const logDir = join(agentDir, "logs", "safety-guard");
+	const files = await readdir(logDir);
+	assert.equal(files.length, 1);
+	const records = (await readFile(join(logDir, files[0]), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+	const evaluations = records.filter((record) => record.event === "evaluation");
+	assert.deepEqual(evaluations.map((record) => record.command), ["git push", "git status"]);
+	assert.deepEqual(evaluations.map((record) => record.captureMode), ["catches", "all"]);
+	assert.deepEqual(evaluations.map((record) => record.ruleId), ["git.state_change", "git.read_only"]);
+	assert.ok(records.some((record) => record.event === "resolution" && record.outcome === "denied-unattended"));
+	assert.ok(records.some((record) => record.event === "execution_end" && record.durationMs === 4));
+	assert.ok(records.every((record) => record.command !== "echo not-logged"));
 });

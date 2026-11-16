@@ -1,6 +1,15 @@
 import { isToolCallEventType, rawKeyHint, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { approvalReason } from "./guard.ts";
+import {
+	AUDIT_LOG_SCHEMA_VERSION,
+	AUDIT_RULESET_VERSION,
+	commandFingerprint,
+	DEFAULT_MAX_AUDIT_BYTES,
+	SafetyGuardAuditLog,
+	type AuditCaptureMode,
+	type AuditRecord,
+} from "./audit-log.ts";
+import { analyzeCommand } from "./guard.ts";
 import { ApprovalDeadline, DENIAL_GUIDANCE, DenialTracker, MAX_REPEATED_DENIALS } from "./runtime.ts";
 
 /**
@@ -23,13 +32,63 @@ function commandForDisplay(command: string): string {
 
 export default function safetyGuard(pi: ExtensionAPI) {
 	let mode: "interactive" | "unattended" = "interactive";
+	let auditMode: AuditCaptureMode = "off";
 	let denials = new DenialTracker();
 	let reportedCount = 0;
+	let run = 0;
 	let stopped = false;
+	let auditFailureReported = false;
 	const pending = new Set<ApprovalDeadline>();
+	const auditLog = new SafetyGuardAuditLog();
+	const auditedCalls = new Map<string, AuditRecord>();
 
 	function updateStatus(ctx: ExtensionContext) {
-		if (ctx.hasUI && !stopped) ctx.ui.setStatus("safety-guard", `Safety: ${mode}${denials.total ? ` • ${denials.total} blocked` : ""}`);
+		if (ctx.hasUI && !stopped) {
+			const audit = auditMode === "off" ? "" : ` • audit:${auditMode}`;
+			ctx.ui.setStatus("safety-guard", `Safety: ${mode}${audit}${denials.total ? ` • ${denials.total} blocked` : ""}`);
+		}
+	}
+
+	function recordFor(
+		event: AuditRecord["event"],
+		base: AuditRecord,
+		fields: Partial<AuditRecord> = {},
+	): AuditRecord {
+		return {
+			schemaVersion: AUDIT_LOG_SCHEMA_VERSION,
+			rulesetVersion: AUDIT_RULESET_VERSION,
+			timestamp: new Date().toISOString(),
+			event,
+			captureMode: base.captureMode,
+			sessionId: base.sessionId,
+			sessionFile: base.sessionFile,
+			run: base.run,
+			toolCallId: base.toolCallId,
+			parentToolCallId: base.parentToolCallId,
+			cwd: base.cwd,
+			safetyMode: base.safetyMode,
+			extensionMode: base.extensionMode,
+			commandHash: base.commandHash,
+			...fields,
+		};
+	}
+
+	async function appendAudit(record: AuditRecord, ctx: ExtensionContext): Promise<boolean> {
+		const result = await auditLog.append(record);
+		if (result.ok) return true;
+		auditMode = "off";
+		auditedCalls.clear();
+		updateStatus(ctx);
+		if (ctx.hasUI && !auditFailureReported) {
+			auditFailureReported = true;
+			ctx.ui.notify(`Safety audit logging disabled: ${result.error}. Log path: ${result.path}`, "warning");
+		}
+		return false;
+	}
+
+	async function recordResolution(toolCallId: string, outcome: string, ctx: ExtensionContext) {
+		const base = auditedCalls.get(toolCallId);
+		if (base) await appendAudit(recordFor("resolution", base, { outcome }), ctx);
 	}
 
 	function setMode(next: typeof mode, ctx: ExtensionContext) {
@@ -54,9 +113,10 @@ export default function safetyGuard(pi: ExtensionAPI) {
 	}
 
 	pi.registerCommand("safety", {
-		description: "Safety guard: interactive, unattended (deny-and-continue), or status",
-		getArgumentCompletions: (prefix) => ["interactive", "unattended", "status"]
-			.filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value })),
+		description: "Safety guard mode, status, and opt-in decision audit logging",
+		getArgumentCompletions: (prefix) => [
+			"interactive", "unattended", "status", "log off", "log catches", "log all", "log status",
+		].filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value })),
 		handler: async (args, ctx) => {
 			const action = args.trim() || "status";
 			if (action === "interactive" || action === "unattended") {
@@ -65,21 +125,48 @@ export default function safetyGuard(pi: ExtensionAPI) {
 					? "Safety guard: deny-and-continue. Guarded commands will be denied without prompting. Reload/restart resets to interactive."
 					: "Safety guard: interactive approval, with a 30-minute timeout to deny-and-continue. No blocked commands will be replayed.", "info");
 			} else if (action === "status") {
-				if (ctx.hasUI) ctx.ui.notify(`Safety mode: ${mode}. Approval timeout: 30 minutes. Without UI, guarded commands are always denied.\n${denials.summary()}`, "info");
-			} else if (ctx.hasUI) ctx.ui.notify("Usage: /safety [interactive|unattended|status]", "warning");
+				if (ctx.hasUI) ctx.ui.notify(
+					`Safety mode: ${mode}. Approval timeout: 30 minutes. Without UI, guarded commands are always denied.\n` +
+					`Audit logging: ${auditMode}. Path: ${auditLog.directory}. Limit: ${Math.floor(DEFAULT_MAX_AUDIT_BYTES / (1024 * 1024))} MiB.\n${denials.summary()}`,
+					"info",
+				);
+			} else if (action === "log status" || action === "log") {
+				if (ctx.hasUI) ctx.ui.notify(
+					`Safety audit logging: ${auditMode}. Path: ${auditLog.directory}. Total limit: ${Math.floor(DEFAULT_MAX_AUDIT_BYTES / (1024 * 1024))} MiB. Logging resets to off on reload/restart.`,
+					"info",
+				);
+			} else if (action === "log off") {
+				auditMode = "off";
+				updateStatus(ctx);
+				if (ctx.hasUI) ctx.ui.notify("Safety audit logging disabled. Existing logs were not deleted.", "info");
+			} else if (action === "log catches" || action === "log all") {
+				auditMode = action === "log all" ? "all" : "catches";
+				auditFailureReported = false;
+				updateStatus(ctx);
+				if (ctx.hasUI) ctx.ui.notify(
+					`Safety audit logging enabled (${auditMode}). Raw Bash commands and working directories will be written to ${auditLog.directory} with local-only permissions. ` +
+					"Command output, prompts, and environment variables are not logged. Logging resets to off on reload/restart.",
+					"warning",
+				);
+			} else if (ctx.hasUI) {
+				ctx.ui.notify("Usage: /safety [interactive|unattended|status|log off|log catches|log all|log status]", "warning");
+			}
 		},
 	});
 
 	pi.on("session_start", (_event, ctx) => updateStatus(ctx));
-	pi.on("session_shutdown", (_event, ctx) => {
+	pi.on("session_shutdown", async (_event, ctx) => {
 		stopped = true;
 		for (const deadline of pending) {
 			deadline.cancel();
 			deadline.dispose();
 		}
+		await auditLog.flush();
+		auditedCalls.clear();
 		if (ctx.hasUI) ctx.ui.setStatus("safety-guard", undefined);
 	});
 	pi.on("before_agent_start", (event, ctx) => {
+		run++;
 		denials = new DenialTracker();
 		reportedCount = 0;
 		updateStatus(ctx);
@@ -105,10 +192,37 @@ export default function safetyGuard(pi: ExtensionAPI) {
 	pi.on("tool_call", async (event, ctx) => {
 		if (!isToolCallEventType("bash", event)) return;
 		const command = event.input.command;
-		const reason = approvalReason(command);
-		if (!reason) return;
+		const analysis = analyzeCommand(command);
+		const captureMode = auditMode;
+		if (captureMode === "all" || (captureMode === "catches" && analysis.decision === "review")) {
+			const evaluation: AuditRecord = {
+				schemaVersion: AUDIT_LOG_SCHEMA_VERSION,
+				rulesetVersion: AUDIT_RULESET_VERSION,
+				timestamp: new Date().toISOString(),
+				event: "evaluation",
+				captureMode,
+				sessionId: ctx.sessionManager.getSessionId() || "ephemeral",
+				sessionFile: ctx.sessionManager.getSessionFile() ?? undefined,
+				run,
+				toolCallId: event.toolCallId,
+				parentToolCallId: event.parentToolCallId,
+				cwd: ctx.cwd,
+				safetyMode: ctx.hasUI ? mode : "approval-unavailable",
+				extensionMode: ctx.mode,
+				commandHash: commandFingerprint(command),
+				command,
+				decision: analysis.decision,
+				ruleId: analysis.ruleId,
+				reason: analysis.reason,
+			};
+			if (await appendAudit(evaluation, ctx)) auditedCalls.set(event.toolCallId, evaluation);
+		}
+
+		if (analysis.decision === "allow") return;
+		const reason = analysis.reason!;
 
 		if (!ctx.hasUI || mode === "unattended") {
+			await recordResolution(event.toolCallId, ctx.hasUI ? "denied-unattended" : "denied-no-ui", ctx);
 			return block(command, reason, ctx.hasUI
 				? "Safety guard denied command in unattended (deny-and-continue) mode"
 				: "Safety guard denied command because approval is unavailable", ctx);
@@ -118,21 +232,41 @@ export default function safetyGuard(pi: ExtensionAPI) {
 		pending.add(deadline);
 		try {
 			const approved = await confirmCommand(command, reason, ctx, deadline);
-			if (stopped) return { block: true, reason: "Safety guard is shutting down; command denied." };
+			if (stopped) {
+				await recordResolution(event.toolCallId, "denied-shutdown", ctx);
+				return { block: true, reason: "Safety guard is shutting down; command denied." };
+			}
 			if (deadline.timedOut) {
 				setMode("unattended", ctx);
 				ctx.ui.notify("Safety approval timed out after 30 minutes. Command denied; switched to unattended deny-and-continue. Use /safety interactive to restore prompting, or reload/restart.", "warning");
+				await recordResolution(event.toolCallId, "denied-timeout", ctx);
 				return block(command, reason, "Approval timed out after 30 minutes; safety guard switched to unattended (deny-and-continue) mode", ctx);
 			}
 			if (!approved || deadline.signal.aborted) {
+				await recordResolution(event.toolCallId, deadline.signal.aborted ? "denied-cancelled" : "denied-user", ctx);
 				return block(command, reason, deadline.signal.aborted
 					? "Safety approval cancelled; command denied"
 					: "User declined command", ctx);
 			}
+			await recordResolution(event.toolCallId, "approved", ctx);
+		} catch (error) {
+			await recordResolution(event.toolCallId, "approval-error", ctx);
+			throw error;
 		} finally {
 			deadline.dispose();
 			pending.delete(deadline);
 		}
+	});
+
+	pi.on("tool_execution_end", async (event, ctx) => {
+		const base = auditedCalls.get(event.toolCallId);
+		if (!base) return;
+		auditedCalls.delete(event.toolCallId);
+		await appendAudit(recordFor("execution_end", base, {
+			executed: event.durationMs !== undefined,
+			isError: event.isError,
+			durationMs: event.durationMs,
+		}), ctx);
 	});
 
 	async function confirmCommand(command: string, reason: string, ctx: ExtensionContext, deadline: ApprovalDeadline): Promise<boolean> {
