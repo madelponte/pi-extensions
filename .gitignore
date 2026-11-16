@@ -38,3 +38,6 @@ mcp-bridge/config.json
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+#external extensions
+/portkey-discovery
