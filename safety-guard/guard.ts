@@ -359,12 +359,138 @@ function gitInvocationAnalysis(command: string): PartialAnalysis {
 	return { matched, analysis: matched ? allow("git.read_only") : undefined };
 }
 
+/**
+ * Matches a GitHub CLI invocation in command position, after any launchers.
+ * Group 1 is the argument text following `gh`. `gh-foo` and `gh.exe`-style
+ * names are not treated as invocations.
+ */
+const GH_INVOCATION = new RegExp(`${COMMAND_START}gh${WORD_END}(?![@])([^\\n;&|]*)`, "gi");
+
+/** `gh api` options that take the next word as their value. */
+const GH_API_OPTIONS_WITH_VALUE = new Set(["-H", "--header", "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview"]);
+/** `gh api` options that add request parameters and switch the default method from GET to POST. */
+const GH_API_FIELD_OPTION = /^(?:-f|-F|--field|--raw-field)$/;
+const GH_API_INLINE_FIELD_OPTION = /^(?:-[fF].|--(?:raw-)?field=)/;
+
+/** `gh <noun> <verb>` verbs that delete GitHub data. */
+const GH_DELETE_VERB = /^(?:delete|delete-asset|item-delete|field-delete|remove|rm)$/;
+/** Second-level command groups with their own delete verbs (`gh repo deploy-key delete`). */
+const GH_NESTED_GROUPS = new Set(["repo deploy-key", "repo autolink"]);
+/** Repository/host selectors that may appear before the verb (`gh pr -R owner/repo merge`). */
+const GH_OPTIONS_WITH_VALUE = new Set(["-R", "--repo", "--hostname"]);
+
+/** Returns a reason for `gh api` calls that may write to GitHub. */
+function ghApiAnalysis(args: string[], command: string): CommandAnalysis | undefined {
+	let method: string | undefined;
+	let hasParameters = false;
+	let fileInput = false;
+	let endpoint: string | undefined;
+	for (let index = 0; index < args.length; index++) {
+		const arg = args[index];
+		if (arg === "-X" || arg === "--method") {
+			method = args[++index];
+			continue;
+		}
+		const inlineMethod = /^(?:-X|--method=)(.+)$/.exec(arg);
+		if (inlineMethod) {
+			method = inlineMethod[1];
+			continue;
+		}
+		if (GH_API_FIELD_OPTION.test(arg)) {
+			hasParameters = true;
+			if (args[index + 1]?.includes("=@")) fileInput = true;
+			index++;
+			continue;
+		}
+		if (GH_API_INLINE_FIELD_OPTION.test(arg)) {
+			hasParameters = true;
+			if (arg.includes("=@")) fileInput = true;
+			continue;
+		}
+		if (arg === "--input" || arg.startsWith("--input=")) {
+			hasParameters = true;
+			fileInput = true;
+			if (arg === "--input") index++;
+			continue;
+		}
+		if (GH_API_OPTIONS_WITH_VALUE.has(arg)) {
+			index++;
+			continue;
+		}
+		if (!arg.startsWith("-") && endpoint === undefined) endpoint = arg;
+	}
+
+	if (method !== undefined) {
+		const normalized = method.toUpperCase();
+		if (normalized === "GET" || normalized === "HEAD") return undefined;
+		return review("github.api_write", `GitHub API write request: gh api -X ${normalized || "(dynamic)"}`);
+	}
+	if (!hasParameters) return undefined;
+	if (endpoint === "graphql") {
+		// GraphQL always uses POST; only mutations write. Query text may span later
+		// lines, so search the whole command, and treat file input as unknown.
+		if (fileInput || /\bmutation\b/i.test(command)) {
+			return review("github.api_write", "GitHub GraphQL mutation: gh api graphql");
+		}
+		return undefined;
+	}
+	return review("github.api_write", "GitHub API write request: gh api (parameters imply POST)");
+}
+
+/** Returns a reason when the command contains a GitHub CLI call that may delete or irreversibly change data. */
+function ghInvocationAnalysis(command: string): PartialAnalysis {
+	let matched = false;
+	// Join backslash-newline continuations so options on later lines are seen.
+	const joined = command.replace(/\\\r?\n/g, " ");
+	for (const match of joined.matchAll(GH_INVOCATION)) {
+		matched = true;
+		const words = shellWords(match[1] ?? "");
+		const positional: string[] = [];
+		for (let index = 0; index < words.length && positional.length < 3; index++) {
+			const word = words[index];
+			if (GH_OPTIONS_WITH_VALUE.has(word)) index++;
+			else if (!word.startsWith("-")) positional.push(word.toLowerCase());
+			// `gh api` options are parsed separately, so stop at its endpoint.
+			if (positional[0] === "api") break;
+		}
+		const [noun, verb, nestedVerb] = positional;
+		if (!noun) continue;
+		const has = (pattern: RegExp) => words.some((word) => pattern.test(word));
+
+		if (noun === "api") {
+			const analysis = ghApiAnalysis(words.slice(1), joined);
+			if (analysis) return { matched, analysis };
+			continue;
+		}
+		if (verb && GH_DELETE_VERB.test(verb)) {
+			return { matched, analysis: review("github.delete", `GitHub CLI deletion: gh ${noun} ${verb}`) };
+		}
+		if (GH_NESTED_GROUPS.has(`${noun} ${verb}`) && nestedVerb && GH_DELETE_VERB.test(nestedVerb)) {
+			return { matched, analysis: review("github.delete", `GitHub CLI deletion: gh ${noun} ${verb} ${nestedVerb}`) };
+		}
+		if (noun === "pr" && verb === "merge") {
+			return { matched, analysis: review("github.merge", "GitHub pull request merge: gh pr merge") };
+		}
+		const change = (detail: string) => ({ matched, analysis: review("github.destructive_change", `GitHub CLI change that may lose data: gh ${detail}`) });
+		if (noun === "pr" && verb === "close" && has(/^(?:-d|--delete-branch)$/)) return change("pr close --delete-branch");
+		if (noun === "repo" && (verb === "archive" || verb === "rename")) return change(`repo ${verb}`);
+		if (noun === "repo" && verb === "edit" && has(/^--visibility(?:=|$)/)) return change("repo edit --visibility");
+		if (noun === "repo" && verb === "sync" && has(/^--force$/)) return change("repo sync --force");
+		if (noun === "release" && verb === "upload" && has(/^--clobber$/)) return change("release upload --clobber");
+		if (noun === "secret" && verb === "set") return change("secret set");
+	}
+	return { matched, analysis: undefined };
+}
+
 /** Returns the guard's structured decision for one Bash command string. */
 export function analyzeCommand(command: string): CommandAnalysis {
 	let allowAnalysis: CommandAnalysis | undefined;
 	const git = gitInvocationAnalysis(command);
 	if (git.analysis?.decision === "review") return git.analysis;
 	if (git.analysis) allowAnalysis = git.analysis;
+
+	const gh = ghInvocationAnalysis(command);
+	if (gh.analysis) return gh.analysis;
 
 	const rm = rmInvocationAnalysis(command);
 	if (rm.analysis?.decision === "review") return rm.analysis;

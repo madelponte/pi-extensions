@@ -8,7 +8,7 @@ export type AuditCaptureMode = "off" | "catches" | "all";
 /** Increment when the JSONL record shape changes incompatibly. */
 export const AUDIT_LOG_SCHEMA_VERSION = 1;
 /** Increment when stable rule IDs or scanner decision semantics change. */
-export const AUDIT_RULESET_VERSION = 1;
+export const AUDIT_RULESET_VERSION = 2;
 export const DEFAULT_MAX_AUDIT_BYTES = 25 * 1024 * 1024;
 
 export interface AuditRecord {

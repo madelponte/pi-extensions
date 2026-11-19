@@ -330,6 +330,67 @@ shouldAllow("docker compose down");
 shouldAllow("kubectl -n prod get pods");
 shouldAllow("su -l deploy");
 
+// --- GitHub CLI ------------------------------------------------------------------
+const GH_DELETE = (command: string) => `GitHub CLI deletion: gh ${command}`;
+const GH_CHANGE = (command: string) => `GitHub CLI change that may lose data: gh ${command}`;
+shouldFlag("gh repo delete foo/bar --yes", GH_DELETE("repo delete"));
+shouldFlag("gh release delete v1.0 --cleanup-tag", GH_DELETE("release delete"));
+shouldFlag("gh release delete-asset v1.0 app.zip", GH_DELETE("release delete-asset"));
+shouldFlag("gh issue delete 12", GH_DELETE("issue delete"));
+shouldFlag("gh run delete 123", GH_DELETE("run delete"));
+shouldFlag("gh cache delete --all", GH_DELETE("cache delete"));
+shouldFlag("gh secret remove TOKEN", GH_DELETE("secret remove"));
+shouldFlag("gh project item-delete 1 --id X", GH_DELETE("project item-delete"));
+shouldFlag("gh repo deploy-key delete 42", GH_DELETE("repo deploy-key delete"));
+shouldFlag("gh pr -R owner/repo merge 5 --squash", "GitHub pull request merge: gh pr merge");
+shouldFlag("gh pr merge 5", "GitHub pull request merge: gh pr merge");
+shouldFlag("gh pr close 5 --delete-branch", GH_CHANGE("pr close --delete-branch"));
+shouldFlag("gh repo archive foo/bar", GH_CHANGE("repo archive"));
+shouldFlag("gh repo rename new-name", GH_CHANGE("repo rename"));
+shouldFlag("gh repo edit --visibility public --accept-visibility-change-consequences", GH_CHANGE("repo edit --visibility"));
+shouldFlag("gh repo sync --force", GH_CHANGE("repo sync --force"));
+shouldFlag("gh release upload v1 app.zip --clobber", GH_CHANGE("release upload --clobber"));
+shouldFlag("gh secret set TOKEN < token.txt", GH_CHANGE("secret set"));
+shouldFlag("gh api -X DELETE repos/a/b", "GitHub API write request: gh api -X DELETE");
+shouldFlag("gh api --method=patch repos/a/b -f private=true", "GitHub API write request: gh api -X PATCH");
+shouldFlag("gh api repos/a/b -XPUT", "GitHub API write request: gh api -X PUT");
+shouldFlag("gh api repos/a/b/issues -f title=x", "GitHub API write request: gh api (parameters imply POST)");
+shouldFlag("gh api repos/a/b/issues --input body.json", "GitHub API write request: gh api (parameters imply POST)");
+shouldFlag("gh api graphql -f query='mutation { deleteRepository(input: {}) { clientMutationId } }'", "GitHub GraphQL mutation: gh api graphql");
+shouldFlag("gh api graphql -F query=@mutation.graphql", "GitHub GraphQL mutation: gh api graphql");
+shouldFlag("gh api \\\n  -X DELETE repos/a/b", "GitHub API write request: gh api -X DELETE");
+shouldFlag("cd repo && timeout 30 gh repo delete foo/bar --yes", GH_DELETE("repo delete"));
+shouldFlag("for r in a b; do gh repo delete \"$r\" --yes; done", GH_DELETE("repo delete"));
+shouldFlag("/usr/bin/gh repo delete foo/bar", GH_DELETE("repo delete"));
+shouldFlag("bash -c 'gh release delete v1'", GH_DELETE("release delete"));
+shouldFlag("gh pr view 5; gh pr merge 5", "GitHub pull request merge: gh pr merge");
+shouldAllow("gh api repos/a/b");
+shouldAllow("gh api repos/a/b --jq '.archived'");
+shouldAllow("gh api -X GET search/issues -f q=repo:a/b");
+shouldAllow("gh api --method get repos/a/b -F per_page=100");
+shouldAllow("timeout 60 gh api \"search/repositories?q=x&per_page=3\" --jq '.items[] | .full_name'");
+shouldAllow("gh api graphql -f query='query { viewer { login } }'");
+shouldAllow("gh pr list --state merged");
+shouldAllow("gh pr view 5 --comments");
+shouldAllow("gh pr close 5");
+shouldAllow("gh pr create --fill");
+shouldAllow("gh issue list --search delete");
+shouldAllow("gh repo view foo/bar");
+shouldAllow("gh repo list --topic delete");
+shouldAllow("gh release list");
+shouldAllow("gh release upload v1 app.zip");
+shouldAllow("gh auth status");
+shouldAllow("gh secret list");
+shouldAllow("gh run view 123 --log");
+shouldAllow("grep -rn gh-repo-delete docs/");
+shouldAllow("grep -rn delete docs/gh");
+// Quotes are command boundaries (`sh -c '...'`), so quoted text that begins
+// with a guarded command conservatively requires review, like other rules.
+shouldFlag("grep -rn 'gh repo delete' docs/", GH_DELETE("repo delete"));
+shouldAllow("echo gh pr merge");
+shouldAllow("gh-dash");
+shouldAllow("ls ~/.config/gh");
+
 // --- patterns only match at command positions -----------------------------------
 shouldAllow("grep -rn kill src/");
 shouldAllow("npm run kill-port");
@@ -355,6 +416,12 @@ assert.deepEqual(analyzeCommand("git push"), {
 assert.deepEqual(analyzeCommand("git status"), { decision: "allow", ruleId: "git.read_only" });
 assert.deepEqual(analyzeCommand("rm -rf /tmp/generated"), { decision: "allow", ruleId: "deletion.rm_tmp_exception" });
 assert.deepEqual(analyzeCommand("echo hello"), { decision: "allow", ruleId: "allow.no_match" });
-passed += 4;
+assert.equal(analyzeCommand("gh repo delete a/b").ruleId, "github.delete");
+assert.equal(analyzeCommand("gh pr merge 1").ruleId, "github.merge");
+assert.equal(analyzeCommand("gh api -X DELETE x").ruleId, "github.api_write");
+assert.equal(analyzeCommand("gh repo archive a/b").ruleId, "github.destructive_change");
+assert.deepEqual(analyzeCommand("gh pr view 1"), { decision: "allow", ruleId: "allow.no_match" });
+assert.deepEqual(analyzeCommand("gh pr view 1; rm -rf /home/x"), { decision: "review", ruleId: "deletion.rm", reason: "file deletion" });
+passed += 10;
 
 console.log(`safety-guard: ${passed} cases passed`);

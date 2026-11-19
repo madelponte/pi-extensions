@@ -85,11 +85,18 @@ Commands are recognized in command position: at the start of the command, after 
 - **Process termination**: `kill`, `killall`, `pkill`.
 - **Container data deletion**: `docker`/`podman` `rm`, `rmi`, `system|volume|image|container prune`/`rm`, `system reset`, and `compose down -v`/`--volumes` (including `docker-compose`/`podman-compose`), with or without global flags.
 - **Kubernetes**: `kubectl delete`, including after global flags such as `-n prod` or `--context prod`.
+- **GitHub CLI**: these act on remote GitHub data with your stored credentials, and many cannot be undone.
+  - Any `gh <group> delete`/`delete-asset`/`item-delete`/`field-delete`/`remove`/`rm` (`repo delete`, `release delete`, `issue delete`, `run delete`, `cache delete`, `secret remove`, `repo deploy-key delete`, ...).
+  - `gh pr merge`, `gh pr close --delete-branch`, `gh repo archive`/`rename`, `gh repo edit --visibility`, `gh repo sync --force`, `gh release upload --clobber`, and `gh secret set` (overwrites an existing secret).
+  - `gh api` with a method other than `GET`/`HEAD` (`-X`/`--method`), or with `-f`/`-F`/`--field`/`--raw-field`/`--input` and no explicit method, because those imply `POST`. `gh api graphql` requires approval only for a `mutation` or a query loaded from a file.
+  - Read-only calls such as `gh pr list`/`view`, `gh repo view`, `gh auth status`, and plain `gh api <endpoint>` run without confirmation. `-R`/`--repo` before the verb is understood (`gh pr -R owner/repo merge 5`).
 - **Database deletion**: `dropdb`, and `DROP DATABASE/TABLE/SCHEMA` or `TRUNCATE TABLE` at the start of a statement.
 - **Git state changes**: any `git` subcommand other than a read-only allowlist (`status`, `log`, `diff`, `show`, `cat-file`, `show-branch`, `check-ignore`, display-only `reflog`, list-only `branch` such as `branch -v` or `branch --contains`, `tag --list`, `remote -v/show/get-url`, `stash list/show`, `worktree list`, `config` getters such as `--get`, `--list`, `config get`, or a single key, …). `config` with `--unset*`, `--remove-section`, `--rename-section`, `--add`, `--replace-all`, `--edit`, or the `set`/`unset`/`edit` subcommands requires approval.
 - **Git options that run programs or write files**: `-c` overrides other than display-only keys (`color.*`, `column.*`, `advice.*`, `core.quotepath`, and `core.pager=cat`), `--config-env`, `--exec-path=`, `--output`, `--ext-diff`, `--textconv`, `git grep -O`/`--open-files-in-pager`, and `git fsck --lost-found`.
 
 Git invocations are detected in command position and after `sudo`/`command`/`env`/`VAR=value` wrappers anywhere in the command, including path-qualified forms (`/usr/bin/git`) and inside `bash -c "git push"` / `sh -c 'git push'` / `$(git push)` / multi-line commands.
+
+GitHub CLI checks cover only the built-in `gh` subcommands listed above. User-defined `gh` aliases and extensions (`gh <alias>`) are not expanded.
 
 Detection is a heuristic scanner over the command string, not a shell parser or security sandbox. It errs toward asking (a confirm prompt) rather than missing a destructive command, so occasional false positives are possible. It cannot see inside interpreted payloads such as `node -e "..."` or `curl … | sh`.
 
